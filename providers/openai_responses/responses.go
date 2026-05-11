@@ -34,7 +34,7 @@ import (
 	"iter"
 	"net/http"
 
-	llm "github.com/amittimalsina/pi-llm-go"
+	llm "github.com/amit-timalsina/pi-llm-go"
 )
 
 // Reasoning-effort levels supported by the Responses API on reasoning models

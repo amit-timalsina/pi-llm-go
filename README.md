@@ -11,7 +11,7 @@ The Go LLM library landscape forces you to pick between heavy vendor SDKs that d
 ## Installation
 
 ```bash
-go get github.com/amittimalsina/pi-llm-go
+go get github.com/amit-timalsina/pi-llm-go
 ```
 
 Requires Go 1.23 or later (for `iter.Seq2`).
@@ -26,8 +26,8 @@ import (
     "fmt"
     "os"
 
-    llm "github.com/amittimalsina/pi-llm-go"
-    "github.com/amittimalsina/pi-llm-go/providers/anthropic"
+    llm "github.com/amit-timalsina/pi-llm-go"
+    "github.com/amit-timalsina/pi-llm-go/providers/anthropic"
 )
 
 func main() {
@@ -65,7 +65,7 @@ for event, err := range p.Stream(ctx, req) {
 
 - **Streaming-first.** `Stream()` returns `iter.Seq2[StreamEvent, error]` — Go 1.23 iterators, no callbacks, no goroutine leaks. `Complete()` is the synchronous helper for one-shot use.
 - **Sealed sum types.** `Block` and `StreamEvent` are interfaces with package-private marker methods. Type-switch exhaustively; the compiler tells you if you miss a case.
-- **Tool calling.** Declare tools on `Request.Tools`; receive `ToolCallBlock`s on the response; send `ToolResultBlock`s back. Pi-llm-go does not execute tools — that's [pi-agent-go](https://github.com/amittimalsina/pi-agent-go)'s job.
+- **Tool calling.** Declare tools on `Request.Tools`; receive `ToolCallBlock`s on the response; send `ToolResultBlock`s back. Pi-llm-go does not execute tools — that's [pi-agent-go](https://github.com/amit-timalsina/pi-agent-go)'s job.
 - **Extended thinking.** `ThinkingConfig{BudgetTokens: N}` on requests, surfaced as `ThinkingBlock` content. Anthropic-only at v1.
 - **Open-closed providers.** Implement `LLM.Stream` to add custom providers; no plugin registry needed.
 - **Errors that branch cleanly.** `errors.Is(err, llm.ErrRateLimit)` works through `*APIError` wraps; `errors.As(err, &apiErr)` gives you status + body.
@@ -76,7 +76,7 @@ for event, err := range p.Stream(ctx, req) {
 ### Anthropic
 
 ```go
-import "github.com/amittimalsina/pi-llm-go/providers/anthropic"
+import "github.com/amit-timalsina/pi-llm-go/providers/anthropic"
 
 p, _ := anthropic.New(anthropic.Options{
     APIKey: os.Getenv("ANTHROPIC_API_KEY"),
@@ -91,7 +91,7 @@ Honors `Request.Thinking`. Surfaces all content-block types (text, thinking, too
 ### OpenAI-compatible
 
 ```go
-import "github.com/amittimalsina/pi-llm-go/providers/openai"
+import "github.com/amit-timalsina/pi-llm-go/providers/openai"
 
 p, _ := openai.New(openai.Options{
     APIKey:  os.Getenv("OPENAI_API_KEY"),

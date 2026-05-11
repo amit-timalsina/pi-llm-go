@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	llm "github.com/amittimalsina/pi-llm-go"
-	"github.com/amittimalsina/pi-llm-go/internal/sse"
+	llm "github.com/amit-timalsina/pi-llm-go"
+	"github.com/amit-timalsina/pi-llm-go/internal/sse"
 )
 
 var errIterationStopped = errors.New("iteration stopped")

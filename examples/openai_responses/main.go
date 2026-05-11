@@ -26,8 +26,8 @@ import (
 	"fmt"
 	"os"
 
-	llm "github.com/amittimalsina/pi-llm-go"
-	openai_responses "github.com/amittimalsina/pi-llm-go/providers/openai_responses"
+	llm "github.com/amit-timalsina/pi-llm-go"
+	openai_responses "github.com/amit-timalsina/pi-llm-go/providers/openai_responses"
 )
 
 const azureDefaultURL = "https://anthropicgenesis.cognitiveservices.azure.com/openai/v1/responses?api-version=preview"

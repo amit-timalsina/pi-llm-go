@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	llm "github.com/amittimalsina/pi-llm-go"
+	llm "github.com/amit-timalsina/pi-llm-go"
 )
 
 func TestSentinelForStatus(t *testing.T) {

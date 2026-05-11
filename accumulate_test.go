@@ -6,7 +6,7 @@ import (
 	"iter"
 	"testing"
 
-	llm "github.com/amittimalsina/pi-llm-go"
+	llm "github.com/amit-timalsina/pi-llm-go"
 )
 
 // fromEvents returns an iter.Seq2 that yields the given events in order

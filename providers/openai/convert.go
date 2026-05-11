@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	llm "github.com/amittimalsina/pi-llm-go"
+	llm "github.com/amit-timalsina/pi-llm-go"
 )
 
 // requestBody is the wire shape sent to /v1/chat/completions.

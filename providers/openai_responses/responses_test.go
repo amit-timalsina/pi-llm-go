@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	llm "github.com/amittimalsina/pi-llm-go"
-	openai_responses "github.com/amittimalsina/pi-llm-go/providers/openai_responses"
+	llm "github.com/amit-timalsina/pi-llm-go"
+	openai_responses "github.com/amit-timalsina/pi-llm-go/providers/openai_responses"
 )
 
 type fakeServer struct {

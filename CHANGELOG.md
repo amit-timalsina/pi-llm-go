@@ -57,4 +57,4 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amittimalsina/pi-llm-go/compare/v0.0.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.0.0...HEAD

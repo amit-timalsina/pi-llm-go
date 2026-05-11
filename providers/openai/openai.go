@@ -26,7 +26,7 @@ import (
 	"iter"
 	"net/http"
 
-	llm "github.com/amittimalsina/pi-llm-go"
+	llm "github.com/amit-timalsina/pi-llm-go"
 )
 
 // Canonical OpenAI model IDs as of May 2026. Convenience constants for IDE

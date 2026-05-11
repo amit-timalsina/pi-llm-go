@@ -42,8 +42,8 @@ import (
 	"os/exec"
 	"strings"
 
-	llm "github.com/amittimalsina/pi-llm-go"
-	"github.com/amittimalsina/pi-llm-go/providers/openai"
+	llm "github.com/amit-timalsina/pi-llm-go"
+	"github.com/amit-timalsina/pi-llm-go/providers/openai"
 )
 
 const defaultURL = "https://anthropicgenesis.cognitiveservices.azure.com/openai/deployments/gpt-5.4-mini/chat/completions?api-version=2025-02-01-preview"

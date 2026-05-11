@@ -13,9 +13,9 @@ import (
 	"fmt"
 	"os"
 
-	llm "github.com/amittimalsina/pi-llm-go"
-	"github.com/amittimalsina/pi-llm-go/providers/anthropic"
-	"github.com/amittimalsina/pi-llm-go/providers/openai"
+	llm "github.com/amit-timalsina/pi-llm-go"
+	"github.com/amit-timalsina/pi-llm-go/providers/anthropic"
+	"github.com/amit-timalsina/pi-llm-go/providers/openai"
 )
 
 func main() {

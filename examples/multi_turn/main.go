@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"os"
 
-	llm "github.com/amittimalsina/pi-llm-go"
-	"github.com/amittimalsina/pi-llm-go/providers/anthropic"
+	llm "github.com/amit-timalsina/pi-llm-go"
+	"github.com/amit-timalsina/pi-llm-go/providers/anthropic"
 )
 
 func main() {

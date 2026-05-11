@@ -6,7 +6,7 @@ This file is the **maintainer's working agreement** for `pi-llm-go`. Keep it sho
 
 A minimal, Go-native LLM adapter with streaming, tool calling, and extended thinking. Provider-agnostic `LLM` interface; built-in Anthropic Messages and OpenAI-compatible Chat Completions providers. ~1.5kLoC.
 
-Sibling repo: [`pi-agent-go`](https://github.com/amittimalsina/pi-agent-go) — the single-loop agent layer built on top of this package.
+Sibling repo: [`pi-agent-go`](https://github.com/amit-timalsina/pi-agent-go) — the single-loop agent layer built on top of this package.
 
 ## Stability
 
