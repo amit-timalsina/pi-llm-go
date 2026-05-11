@@ -37,12 +37,39 @@ type streamOptions struct {
 // "system", "user", "assistant", "tool". ToolCalls populates assistant
 // messages that issued function calls; ToolCallID populates tool messages
 // (results being fed back).
+//
+// Content is `any` because OpenAI accepts two shapes:
+//
+//   - "content": "<plain string>"               — text-only (preferred when
+//     no images, smaller wire format)
+//   - "content": [ {type:"text", text:"..."},
+//     {type:"image_url", image_url:{url:"data:..."}} ]  — multimodal
+//
+// convertOutgoingMessage emits the array form iff the message contains
+// at least one ImageBlock; otherwise the string form for back-compat
+// with hosts that only support the legacy shape.
 type apiMessage struct {
 	Role       string        `json:"role"`
-	Content    string        `json:"content,omitempty"`
+	Content    any           `json:"content,omitempty"`
 	Name       string        `json:"name,omitempty"`
 	ToolCalls  []apiToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string        `json:"tool_call_id,omitempty"`
+}
+
+// apiContentPart is one element of the multimodal-array content shape.
+// "type" discriminates the variant:
+//
+//   - "text": Text populated.
+//   - "image_url": ImageURL populated; its Url is a "data:<mime>;base64,<body>"
+//     URI (we only emit base64 today, not remote URLs).
+type apiContentPart struct {
+	Type     string           `json:"type"`
+	Text     string           `json:"text,omitempty"`
+	ImageURL *apiContentImage `json:"image_url,omitempty"`
+}
+
+type apiContentImage struct {
+	URL string `json:"url"`
 }
 
 type apiToolCall struct {
@@ -112,17 +139,55 @@ func buildRequestBody(req llm.Request) (io.Reader, error) {
 func convertOutgoingMessage(m llm.Message) ([]apiMessage, error) {
 	switch m.Role {
 	case llm.RoleUser:
-		// Concatenate text blocks; ignore non-text content for v1 (no images yet).
-		var sb strings.Builder
+		// Text-only fast path emits a plain string content for maximum
+		// compatibility with hosts that don't yet accept the array form.
+		// As soon as any ImageBlock is present, switch to the array form.
+		hasImage := false
 		for _, b := range m.Content {
-			if tb, ok := b.(llm.TextBlock); ok {
-				if sb.Len() > 0 {
-					sb.WriteString("\n")
-				}
-				sb.WriteString(tb.Text)
+			if _, ok := b.(llm.ImageBlock); ok {
+				hasImage = true
+				break
 			}
 		}
-		return []apiMessage{{Role: "user", Content: sb.String()}}, nil
+		if !hasImage {
+			var sb strings.Builder
+			for _, b := range m.Content {
+				if tb, ok := b.(llm.TextBlock); ok {
+					if sb.Len() > 0 {
+						sb.WriteString("\n")
+					}
+					sb.WriteString(tb.Text)
+				}
+			}
+			return []apiMessage{{Role: "user", Content: sb.String()}}, nil
+		}
+
+		// Multimodal: preserve block order in the wire array.
+		var parts []apiContentPart
+		for _, b := range m.Content {
+			switch v := b.(type) {
+			case llm.TextBlock:
+				parts = append(parts, apiContentPart{Type: "text", Text: v.Text})
+			case llm.ImageBlock:
+				if v.Data == "" {
+					return nil, fmt.Errorf("openai: ImageBlock.Data is empty")
+				}
+				if v.MimeType == "" {
+					return nil, fmt.Errorf("openai: ImageBlock.MimeType is empty")
+				}
+				parts = append(parts, apiContentPart{
+					Type: "image_url",
+					ImageURL: &apiContentImage{
+						URL: "data:" + v.MimeType + ";base64," + v.Data,
+					},
+				})
+			default:
+				// Ignore unsupported block types on user messages (e.g.
+				// stray ThinkingBlock from a copy-paste). Same conservative
+				// behavior as the text-only fast path.
+			}
+		}
+		return []apiMessage{{Role: "user", Content: parts}}, nil
 
 	case llm.RoleAssistant:
 		var sb strings.Builder

@@ -72,9 +72,21 @@ type apiBlock struct {
 	Content string `json:"content,omitempty"`
 	IsError bool   `json:"is_error,omitempty"`
 
+	// image — present iff Type == "image".
+	Source *apiImageSource `json:"source,omitempty"`
+
 	// Optional cache breakpoint. Auto-placed by buildRequestBody based on
 	// Request.CacheRetention; callers don't set this directly.
 	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
+}
+
+// apiImageSource is Anthropic's nested image source descriptor.
+// At v0.3.0 we only emit Type="base64". The URL variant
+// ({type:"url", url:"https://..."}) is a future addition.
+type apiImageSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
 }
 
 type apiTool struct {
@@ -215,6 +227,11 @@ func placeUserCacheMarker(messages []apiMessage, marker *apiCacheControl) {
 // pi-llm-go uses Role: RoleTool for tool-result messages; Anthropic accepts
 // tool results inside Role: "user" messages with tool_result content blocks.
 // We translate at the boundary so callers stay on the pi-llm-go shape.
+//
+// User-role messages that contain images but no text get a synthetic
+// "(see attached image)" text block prepended. Anthropic's API works
+// best when image input is accompanied by at least one text block;
+// this matches Mario Zechner's pi-ai placeholder convention.
 func convertOutgoingMessage(m llm.Message) (apiMessage, error) {
 	role := string(m.Role)
 	if m.Role == llm.RoleTool {
@@ -229,7 +246,30 @@ func convertOutgoingMessage(m llm.Message) (apiMessage, error) {
 		}
 		apiMsg.Content = append(apiMsg.Content, ab)
 	}
+
+	if role == "user" && needsImagePlaceholder(apiMsg.Content) {
+		placeholder := apiBlock{Type: "text", Text: "(see attached image)"}
+		apiMsg.Content = append([]apiBlock{placeholder}, apiMsg.Content...)
+	}
 	return apiMsg, nil
+}
+
+// needsImagePlaceholder reports whether content contains at least one
+// "image" block and no "text" block. Anthropic accepts image-only
+// content but the model performs noticeably better with at least one
+// accompanying text block, so we inject a placeholder. Matches Mario's
+// behavior in pi-ai/providers/anthropic.ts:convertContentBlocks.
+func needsImagePlaceholder(content []apiBlock) bool {
+	hasImage, hasText := false, false
+	for _, b := range content {
+		switch b.Type {
+		case "image":
+			hasImage = true
+		case "text":
+			hasText = true
+		}
+	}
+	return hasImage && !hasText
 }
 
 func convertOutgoingBlock(b llm.Block) (apiBlock, error) {
@@ -260,6 +300,21 @@ func convertOutgoingBlock(b llm.Block) (apiBlock, error) {
 			ToolUseID: v.ToolCallID,
 			Content:   v.Content,
 			IsError:   v.IsError,
+		}, nil
+	case llm.ImageBlock:
+		if v.Data == "" {
+			return apiBlock{}, fmt.Errorf("anthropic: ImageBlock.Data is empty")
+		}
+		if v.MimeType == "" {
+			return apiBlock{}, fmt.Errorf("anthropic: ImageBlock.MimeType is empty")
+		}
+		return apiBlock{
+			Type: "image",
+			Source: &apiImageSource{
+				Type:      "base64",
+				MediaType: v.MimeType,
+				Data:      v.Data,
+			},
 		}, nil
 	default:
 		return apiBlock{}, fmt.Errorf("unsupported block type %T", b)

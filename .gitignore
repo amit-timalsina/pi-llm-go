@@ -12,6 +12,7 @@
 /tool_calling
 /azure_openai
 /prompt_caching
+/multimodal
 
 # Coverage / profiling output.
 /coverage.out

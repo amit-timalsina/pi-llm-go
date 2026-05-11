@@ -80,7 +80,41 @@ type ToolResultBlock struct {
 	IsError    bool
 }
 
+// ImageBlock holds image data for multimodal input. Data is the raw
+// base64-encoded image bytes (no "data:" URI prefix); MimeType is the
+// standard MIME identifier (e.g. "image/png"). Providers convert to
+// their on-wire format at the boundary.
+//
+// pi-llm-go does NOT fetch image URLs. Callers that want to attach a
+// remote image must download it themselves first, then construct an
+// ImageBlock with the resulting bytes encoded. This keeps the library
+// network-free except for the LLM provider call itself — no surprise
+// timeouts, no surprise 404s mid-stream.
+//
+// Portable MIME types accepted by every built-in provider:
+//
+//   - "image/jpeg"
+//   - "image/png"
+//   - "image/gif"
+//   - "image/webp"
+//
+// Other types may work on specific providers (e.g. OpenAI accepts more)
+// but pi-llm-go does not pre-validate — the provider returns an
+// ErrInvalidRequest if the type is unsupported.
+//
+// v0.3.0 supports ImageBlock as USER-message input only. Assistant
+// image output is provider-specific and a separate, future feature.
+type ImageBlock struct {
+	// Data is the raw base64-encoded image bytes. Do NOT include the
+	// "data:<mime>;base64," prefix — providers add it where required.
+	Data string
+
+	// MimeType is the image's MIME type (e.g. "image/png"). Required.
+	MimeType string
+}
+
 func (TextBlock) isBlock()       {}
 func (ThinkingBlock) isBlock()   {}
 func (ToolCallBlock) isBlock()   {}
 func (ToolResultBlock) isBlock() {}
+func (ImageBlock) isBlock()      {}
