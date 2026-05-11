@@ -50,34 +50,44 @@ type Block interface {
 	isBlock()
 }
 
-// TextBlock holds plain text content.
+// TextBlock holds plain text content. CacheControl, when non-nil, marks
+// this block as an Anthropic cache breakpoint. See CacheControl godoc.
 type TextBlock struct {
-	Text string
+	Text         string
+	CacheControl *CacheControl
 }
 
 // ThinkingBlock holds an extended-thinking segment emitted by reasoning
 // models. Signature is an opaque provider-supplied token that must be
 // preserved and replayed for multi-turn thinking continuity (Anthropic).
+// CacheControl, when non-nil, marks this block as an Anthropic cache
+// breakpoint.
 type ThinkingBlock struct {
-	Thinking  string
-	Signature string
+	Thinking     string
+	Signature    string
+	CacheControl *CacheControl
 }
 
 // ToolCallBlock represents a tool invocation requested by the model.
 // Arguments is the raw JSON object the model emitted, matching the tool's
 // declared InputSchema. The agent layer validates and dispatches.
+// CacheControl, when non-nil, marks this block as an Anthropic cache
+// breakpoint.
 type ToolCallBlock struct {
-	ID        string
-	Name      string
-	Arguments json.RawMessage
+	ID           string
+	Name         string
+	Arguments    json.RawMessage
+	CacheControl *CacheControl
 }
 
 // ToolResultBlock carries the result of a tool invocation back to the model.
-// ToolCallID matches the ID on the originating ToolCallBlock.
+// ToolCallID matches the ID on the originating ToolCallBlock. CacheControl,
+// when non-nil, marks this block as an Anthropic cache breakpoint.
 type ToolResultBlock struct {
-	ToolCallID string
-	Content    string
-	IsError    bool
+	ToolCallID   string
+	Content      string
+	IsError      bool
+	CacheControl *CacheControl
 }
 
 func (TextBlock) isBlock()       {}

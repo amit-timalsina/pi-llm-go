@@ -1,14 +1,19 @@
 # Compiled binaries produced by `go build` inside the repo (e.g. when
 # running examples from the repo root). The Go toolchain emits these to
 # the working directory; they are not source.
-multi_turn
-openai_responses
-thinking
-streaming
-tool_calling
-azure_openai
+#
+# Leading slash anchors each pattern to the repo root so we don't
+# accidentally also ignore the providers/openai_responses package
+# directory etc.
+/multi_turn
+/openai_responses
+/thinking
+/streaming
+/tool_calling
+/azure_openai
+/prompt_caching
 
 # Coverage / profiling output.
-coverage.out
+/coverage.out
 *.prof
 *.test

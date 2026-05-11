@@ -25,12 +25,17 @@ type fakeServer struct {
 
 	// lastBody captures the JSON body the test posted, for assertions.
 	lastBody json.RawMessage
+	// lastHeaders captures the request headers for assertions (cache-related
+	// beta headers, anthropic-version, etc.). Values are the full multi-value
+	// slice so tests can check whether a given anthropic-beta value was sent.
+	lastHeaders http.Header
 }
 
 func (f *fakeServer) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		f.lastBody = json.RawMessage(body)
+		f.lastHeaders = r.Header.Clone()
 		if f.statusCode != 0 && f.statusCode != http.StatusOK {
 			w.WriteHeader(f.statusCode)
 			_, _ = io.WriteString(w, f.statusBody)
