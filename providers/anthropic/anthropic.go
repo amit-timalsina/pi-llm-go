@@ -94,7 +94,7 @@ func New(opts Options) (*Provider, error) {
 // wrapped in *llm.APIError so callers can use errors.Is on the sentinels.
 func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
 	return func(yield func(llm.StreamEvent, error) bool) {
-		body, err := buildRequestBody(req)
+		body, autoBeta, err := buildRequestBody(req)
 		if err != nil {
 			yield(nil, fmt.Errorf("anthropic: build request: %w", err))
 			return
@@ -109,8 +109,21 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 		httpReq.Header.Set("anthropic-version", p.version)
 		httpReq.Header.Set("content-type", "application/json")
 		httpReq.Header.Set("accept", "text/event-stream")
+		// Caller-supplied beta values first, then auto-applied ones (e.g.
+		// extended-cache-ttl-2025-04-11 when any breakpoint has TTL "1h").
+		// De-dup so we never send the same beta twice.
+		seenBeta := make(map[string]bool, len(p.beta)+len(autoBeta))
 		for _, b := range p.beta {
-			httpReq.Header.Add("anthropic-beta", b)
+			if !seenBeta[b] {
+				httpReq.Header.Add("anthropic-beta", b)
+				seenBeta[b] = true
+			}
+		}
+		for _, b := range autoBeta {
+			if !seenBeta[b] {
+				httpReq.Header.Add("anthropic-beta", b)
+				seenBeta[b] = true
+			}
 		}
 
 		resp, err := p.client.Do(httpReq)
