@@ -53,17 +53,16 @@ type Request struct {
 	Thinking    *ThinkingConfig
 	StopReasons []string
 
-	// SystemCacheControl, when non-nil, marks the System prompt as an
-	// Anthropic cache breakpoint. The Anthropic provider promotes the
-	// plain-string System field to a one-block content array with the
-	// marker attached. Ignored by OpenAI providers (silent drop).
-	SystemCacheControl *CacheControl
-
-	// ToolsCacheControl, when non-nil, is a shortcut that places a cache
-	// breakpoint on the last Tool in the Tools slice. Equivalent to setting
-	// CacheControl on the final Tool entry. If both this field and the last
-	// Tool's CacheControl are set, the per-tool value wins.
-	ToolsCacheControl *CacheControl
+	// CacheRetention controls Anthropic prompt-cache breakpoint placement.
+	// When unset or "none", no cache markers are emitted. When "short" or
+	// "long", the Anthropic provider auto-places ephemeral cache_control
+	// markers at the static prefix boundary: the last block of the System
+	// prompt, the final Tool in Tools, and the last text block of the most
+	// recent user message. "long" additionally selects the 1h TTL and
+	// auto-attaches the extended-cache-ttl-2025-04-11 beta header.
+	//
+	// Ignored by OpenAI providers (their cache is automatic and opaque).
+	CacheRetention CacheRetention
 }
 
 // ThinkingConfig enables extended thinking on supported models. Honored by

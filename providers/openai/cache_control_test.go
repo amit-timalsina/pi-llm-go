@@ -11,30 +11,28 @@ import (
 	"github.com/amit-timalsina/pi-llm-go/providers/openai"
 )
 
-// pi-llm-go's CacheControl is an Anthropic-specific feature. OpenAI Chat
-// Completions does automatic caching with no caller-side breakpoint API;
-// the provider must silently drop CacheControl fields rather than error.
+// pi-llm-go's CacheRetention is Anthropic-specific. OpenAI Chat Completions
+// does automatic caching with no caller-side breakpoint API; the provider
+// must silently drop CacheRetention rather than error.
 //
 // Reuses textOnlyPayload + fakeServer from openai_test.go.
 
-func TestCacheControl_SilentlyDropped(t *testing.T) {
+func TestCacheRetention_SilentlyDropped(t *testing.T) {
 	fs := &fakeServer{payload: textOnlyPayload}
 	srv := httptest.NewServer(fs.handler())
 	defer srv.Close()
 	p, _ := openai.New(openai.Options{APIKey: "test", BaseURL: srv.URL})
 
 	_, err := llm.Complete(context.Background(), p, llm.Request{
-		Model:              openai.GPT5_5,
-		System:             "stable system",
-		SystemCacheControl: llm.Ephemeral(),     // ignored
-		ToolsCacheControl:  llm.EphemeralLong(), // ignored
+		Model:          openai.GPT5_5,
+		System:         "stable system",
+		CacheRetention: llm.CacheRetentionLong, // ignored
 		Tools: []llm.Tool{
-			{Name: "x", InputSchema: json.RawMessage(`{"type":"object"}`),
-				CacheControl: llm.Ephemeral()}, // ignored
+			{Name: "x", InputSchema: json.RawMessage(`{"type":"object"}`)},
 		},
 		Messages: []llm.Message{
 			{Role: llm.RoleUser, Content: []llm.Block{
-				llm.TextBlock{Text: "stable preamble", CacheControl: llm.Ephemeral()},
+				llm.TextBlock{Text: "stable preamble"},
 				llm.TextBlock{Text: "dynamic"},
 			}},
 		},

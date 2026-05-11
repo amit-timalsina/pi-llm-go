@@ -10,8 +10,8 @@ import (
 )
 
 // extendedCacheTTLBeta is the Anthropic beta header required for 1h cache
-// TTL. Auto-applied by buildRequestBody when any breakpoint declares
-// TTL == "1h". See https://docs.claude.com/en/docs/build-with-claude/prompt-caching
+// TTL. Auto-applied by buildRequestBody when CacheRetention == "long".
+// See https://docs.claude.com/en/docs/build-with-claude/prompt-caching
 const extendedCacheTTLBeta = "extended-cache-ttl-2025-04-11"
 
 // requestBody is the JSON body sent to /v1/messages.
@@ -20,9 +20,9 @@ const extendedCacheTTLBeta = "extended-cache-ttl-2025-04-11"
 //
 //   - "system": "<plain string>"                  — when no cache marker
 //   - "system": [{type: "text", text: "...",
-//     cache_control: {...}}]          — when SystemCacheControl set
+//     cache_control: {...}}]          — when CacheRetention places a marker
 //
-// We switch shapes at build time based on Request.SystemCacheControl.
+// We switch shapes at build time based on Request.CacheRetention.
 type requestBody struct {
 	Model         string             `json:"model"`
 	MaxTokens     int                `json:"max_tokens"`
@@ -72,8 +72,8 @@ type apiBlock struct {
 	Content string `json:"content,omitempty"`
 	IsError bool   `json:"is_error,omitempty"`
 
-	// Optional cache breakpoint. Honored on any block type Anthropic
-	// supports caching on (text, thinking, tool_use, tool_result).
+	// Optional cache breakpoint. Auto-placed by buildRequestBody based on
+	// Request.CacheRetention; callers don't set this directly.
 	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
 }
 
@@ -91,8 +91,14 @@ type apiThinkingConfig struct {
 
 // buildRequestBody serializes a llm.Request into Anthropic's wire format.
 // Returns the body, any beta-header values that must be auto-applied
-// (e.g. extended-cache-ttl when any breakpoint declares TTL "1h"), and
-// an error.
+// (e.g. extended-cache-ttl when CacheRetention == "long"), and an error.
+//
+// Cache placement: when req.CacheRetention is "short" or "long", we auto-
+// place ephemeral cache_control markers at the static prefix boundary —
+// the System prompt's trailing block, the final Tool in Tools, and the
+// last text block of the most recent user message. This matches Mario
+// Zechner's pi-ai design: the caller picks a retention tier, the provider
+// owns where the markers go.
 func buildRequestBody(req llm.Request) (io.Reader, []string, error) {
 	if req.Model == "" {
 		return nil, nil, fmt.Errorf("model is required")
@@ -102,15 +108,7 @@ func buildRequestBody(req llm.Request) (io.Reader, []string, error) {
 		req.MaxTokens = 4096
 	}
 
-	// Track whether any breakpoint requests the extended 1h TTL; if so,
-	// auto-add the beta header. Centralizing the check here keeps the
-	// caller from having to wire it manually.
-	var needsExtendedTTL bool
-	noteCacheControl := func(cc *llm.CacheControl) {
-		if cc != nil && cc.TTL == "1h" {
-			needsExtendedTTL = true
-		}
-	}
+	marker := cacheMarker(req.CacheRetention)
 
 	body := requestBody{
 		Model:         req.Model,
@@ -121,12 +119,11 @@ func buildRequestBody(req llm.Request) (io.Reader, []string, error) {
 	}
 
 	// System: plain string by default; structured array when caching.
-	if req.SystemCacheControl != nil && req.System != "" {
-		noteCacheControl(req.SystemCacheControl)
+	if marker != nil && req.System != "" {
 		body.System = []apiBlock{{
 			Type:         "text",
 			Text:         req.System,
-			CacheControl: toAPICacheControl(req.SystemCacheControl),
+			CacheControl: marker,
 		}}
 	} else if req.System != "" {
 		body.System = req.System
@@ -139,32 +136,32 @@ func buildRequestBody(req llm.Request) (io.Reader, []string, error) {
 		}
 	}
 
-	// Tools: per-tool CacheControl. If Request.ToolsCacheControl is set
-	// AND the last tool doesn't already have its own CacheControl, the
-	// shortcut applies to that last tool.
 	for _, t := range req.Tools {
-		noteCacheControl(t.CacheControl)
 		body.Tools = append(body.Tools, apiTool{
-			Name:         t.Name,
-			Description:  t.Description,
-			InputSchema:  t.InputSchema,
-			CacheControl: toAPICacheControl(t.CacheControl),
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
 		})
 	}
-	if req.ToolsCacheControl != nil && len(body.Tools) > 0 {
-		noteCacheControl(req.ToolsCacheControl)
+	if marker != nil && len(body.Tools) > 0 {
 		last := len(body.Tools) - 1
-		if body.Tools[last].CacheControl == nil {
-			body.Tools[last].CacheControl = toAPICacheControl(req.ToolsCacheControl)
-		}
+		body.Tools[last].CacheControl = marker
 	}
 
 	for _, m := range req.Messages {
-		apiMsg, err := convertOutgoingMessage(m, noteCacheControl)
+		apiMsg, err := convertOutgoingMessage(m)
 		if err != nil {
 			return nil, nil, fmt.Errorf("convert message: %w", err)
 		}
 		body.Messages = append(body.Messages, apiMsg)
+	}
+
+	// Place a marker on the last text block of the most recent user message.
+	// We walk backwards because the "most recent user message" is the most
+	// recently-mutated section of the prompt — caching up to and including
+	// it captures the largest stable prefix for the next turn.
+	if marker != nil {
+		placeUserCacheMarker(body.Messages, marker)
 	}
 
 	buf := &bytes.Buffer{}
@@ -173,21 +170,49 @@ func buildRequestBody(req llm.Request) (io.Reader, []string, error) {
 	}
 
 	var autoBeta []string
-	if needsExtendedTTL {
+	if req.CacheRetention == llm.CacheRetentionLong {
 		autoBeta = append(autoBeta, extendedCacheTTLBeta)
 	}
 	return buf, autoBeta, nil
+}
+
+// cacheMarker returns the wire-level cache_control value for the given
+// retention tier, or nil if no marker should be placed.
+func cacheMarker(r llm.CacheRetention) *apiCacheControl {
+	switch r {
+	case llm.CacheRetentionShort:
+		return &apiCacheControl{Type: "ephemeral"}
+	case llm.CacheRetentionLong:
+		return &apiCacheControl{Type: "ephemeral", TTL: "1h"}
+	default:
+		return nil
+	}
+}
+
+// placeUserCacheMarker scans messages from the end and attaches the cache
+// marker to the last text block of the most recent user message. No-op if
+// no user message has a text block.
+func placeUserCacheMarker(messages []apiMessage, marker *apiCacheControl) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "user" {
+			continue
+		}
+		for j := len(messages[i].Content) - 1; j >= 0; j-- {
+			if messages[i].Content[j].Type == "text" {
+				messages[i].Content[j].CacheControl = marker
+				return
+			}
+		}
+		// User message had no text block (e.g. tool_result only); keep
+		// scanning earlier turns.
+	}
 }
 
 // convertOutgoingMessage maps a llm.Message to Anthropic's wire format.
 // pi-llm-go uses Role: RoleTool for tool-result messages; Anthropic accepts
 // tool results inside Role: "user" messages with tool_result content blocks.
 // We translate at the boundary so callers stay on the pi-llm-go shape.
-//
-// noteCC is called for every CacheControl encountered on a block, so the
-// outer build pass can detect features that require a beta header (e.g.
-// 1h TTL).
-func convertOutgoingMessage(m llm.Message, noteCC func(*llm.CacheControl)) (apiMessage, error) {
+func convertOutgoingMessage(m llm.Message) (apiMessage, error) {
 	role := string(m.Role)
 	if m.Role == llm.RoleTool {
 		role = "user"
@@ -195,7 +220,7 @@ func convertOutgoingMessage(m llm.Message, noteCC func(*llm.CacheControl)) (apiM
 
 	apiMsg := apiMessage{Role: role}
 	for _, block := range m.Content {
-		ab, err := convertOutgoingBlock(block, noteCC)
+		ab, err := convertOutgoingBlock(block)
 		if err != nil {
 			return apiMessage{}, err
 		}
@@ -204,62 +229,38 @@ func convertOutgoingMessage(m llm.Message, noteCC func(*llm.CacheControl)) (apiM
 	return apiMsg, nil
 }
 
-func convertOutgoingBlock(b llm.Block, noteCC func(*llm.CacheControl)) (apiBlock, error) {
+func convertOutgoingBlock(b llm.Block) (apiBlock, error) {
 	switch v := b.(type) {
 	case llm.TextBlock:
-		noteCC(v.CacheControl)
-		return apiBlock{
-			Type:         "text",
-			Text:         v.Text,
-			CacheControl: toAPICacheControl(v.CacheControl),
-		}, nil
+		return apiBlock{Type: "text", Text: v.Text}, nil
 	case llm.ThinkingBlock:
 		// Redacted thinking has empty Thinking but a Signature payload; the
 		// wire type for those is "redacted_thinking" with a "data" field, but
 		// at v1 we elide that complexity — round-tripped thinking always uses
 		// the "thinking" type with both fields. Real round-tripping of
 		// redacted blocks is post-v1.
-		noteCC(v.CacheControl)
 		return apiBlock{
-			Type:         "thinking",
-			Thinking:     v.Thinking,
-			Signature:    v.Signature,
-			CacheControl: toAPICacheControl(v.CacheControl),
+			Type:      "thinking",
+			Thinking:  v.Thinking,
+			Signature: v.Signature,
 		}, nil
 	case llm.ToolCallBlock:
-		noteCC(v.CacheControl)
 		return apiBlock{
-			Type:         "tool_use",
-			ID:           v.ID,
-			Name:         v.Name,
-			Input:        v.Arguments,
-			CacheControl: toAPICacheControl(v.CacheControl),
+			Type:  "tool_use",
+			ID:    v.ID,
+			Name:  v.Name,
+			Input: v.Arguments,
 		}, nil
 	case llm.ToolResultBlock:
-		noteCC(v.CacheControl)
 		return apiBlock{
-			Type:         "tool_result",
-			ToolUseID:    v.ToolCallID,
-			Content:      v.Content,
-			IsError:      v.IsError,
-			CacheControl: toAPICacheControl(v.CacheControl),
+			Type:      "tool_result",
+			ToolUseID: v.ToolCallID,
+			Content:   v.Content,
+			IsError:   v.IsError,
 		}, nil
 	default:
 		return apiBlock{}, fmt.Errorf("unsupported block type %T", b)
 	}
-}
-
-func toAPICacheControl(cc *llm.CacheControl) *apiCacheControl {
-	if cc == nil {
-		return nil
-	}
-	t := cc.Type
-	if t == "" {
-		// Default to "ephemeral" if the caller used a zero-value
-		// CacheControl{} or only set TTL — Anthropic's only mode today.
-		t = "ephemeral"
-	}
-	return &apiCacheControl{Type: t, TTL: cc.TTL}
 }
 
 // stopReasonFromAPI maps Anthropic's stop_reason strings to llm.StopReason.

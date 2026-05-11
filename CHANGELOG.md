@@ -6,6 +6,48 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `CacheRetention` enum on `llm.Request` for Anthropic prompt caching.
+  Values: `CacheRetentionNone` (default, no markers), `CacheRetentionShort`
+  (ephemeral, ~5 min), `CacheRetentionLong` (ephemeral, 1h TTL — auto-
+  attaches the `extended-cache-ttl-2025-04-11` beta header). The Anthropic
+  provider auto-places markers at the static prefix boundary: the system
+  prompt's trailing block, the final tool in `Request.Tools`, and the last
+  text block of the most recent user message. OpenAI providers silently
+  ignore `CacheRetention` (their cache is automatic and opaque).
+
+### Removed (breaking)
+
+- `llm.CacheControl` type and `Ephemeral()` / `EphemeralLong()` helpers.
+- `CacheControl *CacheControl` field on `TextBlock`, `ThinkingBlock`,
+  `ToolCallBlock`, `ToolResultBlock`, and `Tool`.
+- `SystemCacheControl` and `ToolsCacheControl` fields on `Request`.
+
+  These were introduced unreleased on `main` (PR #6, never tagged) as
+  explicit per-block markers. WWMD audit against Mario Zechner's upstream
+  pi-ai found the explicit-marker API has been rejected twice in the
+  upstream issue tracker as a footgun: it leaks Anthropic's 4-breakpoint
+  limit into caller code, encourages bad placement, and proliferates
+  fragile invalidation. The single retention knob is the upstream-aligned
+  shape — closes #7.
+
+  Migration:
+
+  ```go
+  // before
+  req := llm.Request{
+      System:             "...",
+      SystemCacheControl: llm.Ephemeral(),
+      ToolsCacheControl:  llm.EphemeralLong(),
+  }
+  // after
+  req := llm.Request{
+      System:         "...",
+      CacheRetention: llm.CacheRetentionLong,
+  }
+  ```
+
 ## [0.1.1] - 2026-05-11
 
 CI + lint cleanup. No behavioral change vs v0.1.0.

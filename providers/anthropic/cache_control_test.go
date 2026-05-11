@@ -12,7 +12,10 @@ import (
 
 // Reuses textOnlyPayload and fakeServer from anthropic_test.go.
 
-func TestCacheControl_BlockLevelOnWire(t *testing.T) {
+// TestCacheRetention_NonePlacesNoMarkers verifies the zero-value contract:
+// without an explicit CacheRetention, the wire format carries no
+// cache_control fields and no extended-TTL beta header.
+func TestCacheRetention_NonePlacesNoMarkers(t *testing.T) {
 	fs := &fakeServer{payload: textOnlyPayload}
 	srv := httptest.NewServer(fs.handler())
 	defer srv.Close()
@@ -21,9 +24,68 @@ func TestCacheControl_BlockLevelOnWire(t *testing.T) {
 	_, err := llm.Complete(context.Background(), p, llm.Request{
 		Model:     anthropic.ClaudeSonnet4_6,
 		MaxTokens: 64,
+		System:    "stable system",
+		Tools: []llm.Tool{
+			{Name: "a", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		},
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(fs.lastBody, &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	// System should be plain string.
+	if _, ok := body["system"].(string); !ok {
+		t.Errorf("system=%T, want plain string when CacheRetention unset", body["system"])
+	}
+	// No cache_control on any tool.
+	for _, raw := range body["tools"].([]any) {
+		if _, has := raw.(map[string]any)["cache_control"]; has {
+			t.Errorf("tool should have no cache_control: %+v", raw)
+		}
+	}
+	// No cache_control on user message blocks.
+	content := body["messages"].([]any)[0].(map[string]any)["content"].([]any)
+	for _, raw := range content {
+		if _, has := raw.(map[string]any)["cache_control"]; has {
+			t.Errorf("user block should have no cache_control: %+v", raw)
+		}
+	}
+	for _, b := range fs.lastHeaders.Values("Anthropic-Beta") {
+		if b == "extended-cache-ttl-2025-04-11" {
+			t.Errorf("extended-cache-ttl beta header should NOT be sent when CacheRetention unset")
+		}
+	}
+}
+
+// TestCacheRetention_ShortPlacesMarkersAtPrefix verifies that "short"
+// retention auto-attaches ephemeral markers at the three prefix-boundary
+// points (system, last tool, last user text block) — with no TTL field
+// and no beta header.
+func TestCacheRetention_ShortPlacesMarkersAtPrefix(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:          anthropic.ClaudeSonnet4_6,
+		MaxTokens:      64,
+		CacheRetention: llm.CacheRetentionShort,
+		System:         "stable system",
+		Tools: []llm.Tool{
+			{Name: "a", InputSchema: json.RawMessage(`{"type":"object"}`)},
+			{Name: "b", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		},
 		Messages: []llm.Message{
 			{Role: llm.RoleUser, Content: []llm.Block{
-				llm.TextBlock{Text: "stable preamble", CacheControl: llm.Ephemeral()},
+				llm.TextBlock{Text: "stable preamble"},
 				llm.TextBlock{Text: "dynamic suffix"},
 			}},
 		},
@@ -36,40 +98,65 @@ func TestCacheControl_BlockLevelOnWire(t *testing.T) {
 	if err := json.Unmarshal(fs.lastBody, &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	msgs := body["messages"].([]any)
-	content := msgs[0].(map[string]any)["content"].([]any)
 
-	if len(content) != 2 {
-		t.Fatalf("content blocks=%d, want 2", len(content))
+	// System: structured single-block array with cache_control.
+	sysArr, ok := body["system"].([]any)
+	if !ok || len(sysArr) != 1 {
+		t.Fatalf("system=%v, want 1-element array under short retention", body["system"])
 	}
-	first := content[0].(map[string]any)
-	if first["cache_control"] == nil {
-		t.Errorf("first block missing cache_control: %+v", first)
-	} else {
-		cc := first["cache_control"].(map[string]any)
-		if cc["type"] != "ephemeral" {
-			t.Errorf("first block cache_control.type=%v, want ephemeral", cc["type"])
+	sysBlk := sysArr[0].(map[string]any)
+	sysCC, ok := sysBlk["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatalf("system block missing cache_control: %+v", sysBlk)
+	}
+	if sysCC["type"] != "ephemeral" {
+		t.Errorf("system cache_control.type=%v, want ephemeral", sysCC["type"])
+	}
+	if _, hasTTL := sysCC["ttl"]; hasTTL {
+		t.Errorf("system cache_control.ttl should be absent for short retention; got %v", sysCC["ttl"])
+	}
+
+	// Tools: only the last tool carries cache_control.
+	tools := body["tools"].([]any)
+	if _, has := tools[0].(map[string]any)["cache_control"]; has {
+		t.Errorf("tools[0] should NOT have cache_control")
+	}
+	if tools[len(tools)-1].(map[string]any)["cache_control"] == nil {
+		t.Errorf("last tool missing cache_control")
+	}
+
+	// User message: only the LAST text block carries cache_control.
+	content := body["messages"].([]any)[0].(map[string]any)["content"].([]any)
+	if _, has := content[0].(map[string]any)["cache_control"]; has {
+		t.Errorf("first user text block should NOT have cache_control")
+	}
+	if content[len(content)-1].(map[string]any)["cache_control"] == nil {
+		t.Errorf("last user text block missing cache_control")
+	}
+
+	// No extended-TTL beta header for short.
+	for _, b := range fs.lastHeaders.Values("Anthropic-Beta") {
+		if b == "extended-cache-ttl-2025-04-11" {
+			t.Errorf("extended-cache-ttl beta header should NOT be sent for short retention")
 		}
-	}
-	second := content[1].(map[string]any)
-	if _, has := second["cache_control"]; has {
-		t.Errorf("second block should NOT have cache_control: %+v", second)
 	}
 }
 
-func TestCacheControl_TTLAutoAppliesBetaHeader(t *testing.T) {
+// TestCacheRetention_LongAddsTTLAndBetaHeader verifies "long" retention
+// emits TTL "1h" and auto-attaches the extended-cache-ttl beta header.
+func TestCacheRetention_LongAddsTTLAndBetaHeader(t *testing.T) {
 	fs := &fakeServer{payload: textOnlyPayload}
 	srv := httptest.NewServer(fs.handler())
 	defer srv.Close()
 	p := newProvider(t, srv)
 
 	_, err := llm.Complete(context.Background(), p, llm.Request{
-		Model:     anthropic.ClaudeSonnet4_6,
-		MaxTokens: 64,
+		Model:          anthropic.ClaudeSonnet4_6,
+		MaxTokens:      64,
+		CacheRetention: llm.CacheRetentionLong,
+		System:         "long-lived prefix",
 		Messages: []llm.Message{
-			{Role: llm.RoleUser, Content: []llm.Block{
-				llm.TextBlock{Text: "long-lived prefix", CacheControl: llm.EphemeralLong()},
-			}},
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}},
 		},
 	})
 	if err != nil {
@@ -87,211 +174,66 @@ func TestCacheControl_TTLAutoAppliesBetaHeader(t *testing.T) {
 		t.Errorf("missing extended-cache-ttl-2025-04-11 beta header; got: %v", betas)
 	}
 
-	// And the wire-level TTL field should be "1h".
 	var body map[string]any
 	_ = json.Unmarshal(fs.lastBody, &body)
-	content := body["messages"].([]any)[0].(map[string]any)["content"].([]any)
-	cc := content[0].(map[string]any)["cache_control"].(map[string]any)
+	sysBlk := body["system"].([]any)[0].(map[string]any)
+	cc := sysBlk["cache_control"].(map[string]any)
 	if cc["ttl"] != "1h" {
-		t.Errorf("cache_control.ttl=%v, want 1h", cc["ttl"])
+		t.Errorf("system cache_control.ttl=%v, want 1h", cc["ttl"])
 	}
 }
 
-func TestCacheControl_NoBetaWhenNoLongTTL(t *testing.T) {
+// TestCacheRetention_UserMarkerWalksBackPastToolResult verifies the
+// placement algorithm skips a trailing tool_result-only user message and
+// marks the previous user message that has a text block. This is the
+// shape after a tool round-trip: tool result is in a "user" role message
+// with no text blocks.
+func TestCacheRetention_UserMarkerWalksBackPastToolResult(t *testing.T) {
 	fs := &fakeServer{payload: textOnlyPayload}
 	srv := httptest.NewServer(fs.handler())
 	defer srv.Close()
 	p := newProvider(t, srv)
 
 	_, err := llm.Complete(context.Background(), p, llm.Request{
-		Model:     anthropic.ClaudeSonnet4_6,
-		MaxTokens: 64,
+		Model:          anthropic.ClaudeSonnet4_6,
+		MaxTokens:      64,
+		CacheRetention: llm.CacheRetentionShort,
 		Messages: []llm.Message{
-			{Role: llm.RoleUser, Content: []llm.Block{
-				llm.TextBlock{Text: "default 5min TTL", CacheControl: llm.Ephemeral()},
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "earlier question"}}},
+			{Role: llm.RoleAssistant, Content: []llm.Block{
+				llm.ToolCallBlock{ID: "t1", Name: "echo", Arguments: json.RawMessage(`{}`)},
+			}},
+			{Role: llm.RoleTool, Content: []llm.Block{
+				llm.ToolResultBlock{ToolCallID: "t1", Content: "ok"},
 			}},
 		},
 	})
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	for _, b := range fs.lastHeaders.Values("Anthropic-Beta") {
-		if b == "extended-cache-ttl-2025-04-11" {
-			t.Errorf("extended-cache-ttl beta header should NOT be sent for default TTL")
+
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	msgs := body["messages"].([]any)
+
+	// Tool result (last user-role message on the wire) must NOT carry the marker.
+	last := msgs[len(msgs)-1].(map[string]any)
+	if last["role"] != "user" {
+		t.Fatalf("expected last wire message to be user-role tool_result; got role=%v", last["role"])
+	}
+	for _, raw := range last["content"].([]any) {
+		if _, has := raw.(map[string]any)["cache_control"]; has {
+			t.Errorf("tool_result block should NOT carry cache_control: %+v", raw)
 		}
 	}
-}
 
-func TestCacheControl_SystemPromptStructuredWhenCached(t *testing.T) {
-	fs := &fakeServer{payload: textOnlyPayload}
-	srv := httptest.NewServer(fs.handler())
-	defer srv.Close()
-	p := newProvider(t, srv)
-
-	_, err := llm.Complete(context.Background(), p, llm.Request{
-		Model:              anthropic.ClaudeSonnet4_6,
-		MaxTokens:          64,
-		System:             "You are a stable assistant.",
-		SystemCacheControl: llm.Ephemeral(),
-		Messages: []llm.Message{
-			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
+	// Earlier user message's text block must carry it.
+	first := msgs[0].(map[string]any)
+	if first["role"] != "user" {
+		t.Fatalf("expected first wire message to be user; got %v", first["role"])
 	}
-
-	var body map[string]any
-	_ = json.Unmarshal(fs.lastBody, &body)
-
-	// When SystemCacheControl is set, "system" must be an array of one block
-	// with cache_control attached — NOT a plain string.
-	sysVal := body["system"]
-	switch s := sysVal.(type) {
-	case []any:
-		if len(s) != 1 {
-			t.Fatalf("system array length=%d, want 1", len(s))
-		}
-		blk := s[0].(map[string]any)
-		if blk["type"] != "text" || blk["text"] != "You are a stable assistant." {
-			t.Errorf("system block shape wrong: %+v", blk)
-		}
-		if blk["cache_control"] == nil {
-			t.Errorf("system block missing cache_control: %+v", blk)
-		}
-	default:
-		t.Fatalf("system=%T, want []any (structured) when SystemCacheControl is set", sysVal)
-	}
-}
-
-func TestCacheControl_SystemPromptPlainWhenNotCached(t *testing.T) {
-	fs := &fakeServer{payload: textOnlyPayload}
-	srv := httptest.NewServer(fs.handler())
-	defer srv.Close()
-	p := newProvider(t, srv)
-
-	_, err := llm.Complete(context.Background(), p, llm.Request{
-		Model:     anthropic.ClaudeSonnet4_6,
-		MaxTokens: 64,
-		System:    "plain system",
-		Messages: []llm.Message{
-			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	var body map[string]any
-	_ = json.Unmarshal(fs.lastBody, &body)
-	if s, ok := body["system"].(string); !ok || s != "plain system" {
-		t.Errorf("system=%v (%T), want plain string", body["system"], body["system"])
-	}
-}
-
-func TestCacheControl_PerToolBreakpoint(t *testing.T) {
-	fs := &fakeServer{payload: textOnlyPayload}
-	srv := httptest.NewServer(fs.handler())
-	defer srv.Close()
-	p := newProvider(t, srv)
-
-	_, err := llm.Complete(context.Background(), p, llm.Request{
-		Model:     anthropic.ClaudeSonnet4_6,
-		MaxTokens: 64,
-		Tools: []llm.Tool{
-			{
-				Name:         "first",
-				Description:  "stable",
-				InputSchema:  json.RawMessage(`{"type":"object"}`),
-				CacheControl: llm.Ephemeral(),
-			},
-			{Name: "second", Description: "in flux", InputSchema: json.RawMessage(`{"type":"object"}`)},
-		},
-		Messages: []llm.Message{
-			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	var body map[string]any
-	_ = json.Unmarshal(fs.lastBody, &body)
-	tools := body["tools"].([]any)
-	if tools[0].(map[string]any)["cache_control"] == nil {
-		t.Errorf("first tool missing cache_control")
-	}
-	if _, has := tools[1].(map[string]any)["cache_control"]; has {
-		t.Errorf("second tool should NOT have cache_control")
-	}
-}
-
-func TestCacheControl_ToolsShortcutMarksLastTool(t *testing.T) {
-	fs := &fakeServer{payload: textOnlyPayload}
-	srv := httptest.NewServer(fs.handler())
-	defer srv.Close()
-	p := newProvider(t, srv)
-
-	_, err := llm.Complete(context.Background(), p, llm.Request{
-		Model:             anthropic.ClaudeSonnet4_6,
-		MaxTokens:         64,
-		ToolsCacheControl: llm.Ephemeral(),
-		Tools: []llm.Tool{
-			{Name: "a", InputSchema: json.RawMessage(`{"type":"object"}`)},
-			{Name: "b", InputSchema: json.RawMessage(`{"type":"object"}`)},
-			{Name: "c", InputSchema: json.RawMessage(`{"type":"object"}`)},
-		},
-		Messages: []llm.Message{
-			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	var body map[string]any
-	_ = json.Unmarshal(fs.lastBody, &body)
-	tools := body["tools"].([]any)
-	if len(tools) != 3 {
-		t.Fatalf("tools len=%d", len(tools))
-	}
-	if _, has := tools[0].(map[string]any)["cache_control"]; has {
-		t.Errorf("tools[0] should NOT have cache_control (shortcut marks only the last)")
-	}
-	if _, has := tools[1].(map[string]any)["cache_control"]; has {
-		t.Errorf("tools[1] should NOT have cache_control (shortcut marks only the last)")
-	}
-	if tools[2].(map[string]any)["cache_control"] == nil {
-		t.Errorf("tools[2] (last) missing cache_control from shortcut")
-	}
-}
-
-func TestCacheControl_PerToolWinsOverShortcut(t *testing.T) {
-	// When both Tool.CacheControl AND Request.ToolsCacheControl could apply
-	// to the same (last) tool, the per-tool field already-set wins — the
-	// shortcut does not overwrite.
-	fs := &fakeServer{payload: textOnlyPayload}
-	srv := httptest.NewServer(fs.handler())
-	defer srv.Close()
-	p := newProvider(t, srv)
-
-	_, err := llm.Complete(context.Background(), p, llm.Request{
-		Model:             anthropic.ClaudeSonnet4_6,
-		MaxTokens:         64,
-		ToolsCacheControl: &llm.CacheControl{Type: "ephemeral", TTL: "1h"}, // shortcut wants 1h
-		Tools: []llm.Tool{
-			{Name: "a", InputSchema: json.RawMessage(`{"type":"object"}`),
-				CacheControl: &llm.CacheControl{Type: "ephemeral"}}, // per-tool wants default
-		},
-		Messages: []llm.Message{
-			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	var body map[string]any
-	_ = json.Unmarshal(fs.lastBody, &body)
-	tools := body["tools"].([]any)
-	cc := tools[0].(map[string]any)["cache_control"].(map[string]any)
-	if _, hasTTL := cc["ttl"]; hasTTL {
-		t.Errorf("per-tool CacheControl (no TTL) should win over shortcut (1h); got cc=%v", cc)
+	firstContent := first["content"].([]any)
+	if firstContent[0].(map[string]any)["cache_control"] == nil {
+		t.Errorf("earlier user text block missing cache_control marker")
 	}
 }
