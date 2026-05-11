@@ -20,7 +20,7 @@ const extendedCacheTTLBeta = "extended-cache-ttl-2025-04-11"
 //
 //   - "system": "<plain string>"                  — when no cache marker
 //   - "system": [{type: "text", text: "...",
-//                 cache_control: {...}}]          — when SystemCacheControl set
+//     cache_control: {...}}]          — when SystemCacheControl set
 //
 // We switch shapes at build time based on Request.SystemCacheControl.
 type requestBody struct {

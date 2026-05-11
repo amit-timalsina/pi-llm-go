@@ -26,7 +26,7 @@ func TestCacheControl_SilentlyDropped(t *testing.T) {
 	_, err := llm.Complete(context.Background(), p, llm.Request{
 		Model:              openai.GPT5_5,
 		System:             "stable system",
-		SystemCacheControl: llm.Ephemeral(), // ignored
+		SystemCacheControl: llm.Ephemeral(),     // ignored
 		ToolsCacheControl:  llm.EphemeralLong(), // ignored
 		Tools: []llm.Tool{
 			{Name: "x", InputSchema: json.RawMessage(`{"type":"object"}`),
