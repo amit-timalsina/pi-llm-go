@@ -6,6 +6,35 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `llm.ImageBlock` — sealed `Block` extension for multimodal image
+  **input** (user-role messages only — assistant/tool ImageBlocks are
+  rejected at the wire boundary). Shape: `{Data: <base64>, MimeType: <mime>}`.
+  Base64-only at the API surface (caller fetches their own URLs first);
+  `MimeType` is required. `ImageBlock.Validate()` rejects empty fields
+  and a leading `"data:"` URI prefix in `Data` (common foot-gun).
+  Portable across providers when the MIME is one of `image/jpeg`,
+  `image/png`, `image/gif`, `image/webp`.
+  Assistant image **output** is a separate, future feature; v0.3.0 is
+  input-only.
+- Anthropic provider: emits the standard `{type:"image", source:{type:"base64",
+  media_type, data}}` wire shape. Image-only user messages get a
+  synthetic "(see attached image)" text block prepended, matching the
+  upstream pi-ai placeholder convention (Anthropic prefers some
+  accompanying text).
+- OpenAI Chat Completions provider: switches user-message `content`
+  from a plain string to the array form `[{type:"text"}, {type:"image_url",
+  image_url:{url:"data:<mime>;base64,..."}}]` when any `ImageBlock` is
+  present. Text-only user messages stay on the legacy string shape for
+  back-compat with hosts that don't accept the array form.
+- OpenAI Responses API provider: emits the `{type:"input_image",
+  image_url:"data:<mime>;base64,..."}` shape (image_url is a flat
+  string here, unlike Chat Completions which wraps it in an object).
+- `examples/multimodal` — generates a small red-square-on-white PNG at
+  runtime, asks the model to describe it; flags `--image` (use your own
+  file) and `--openai` (use OpenAI Chat Completions instead of Anthropic).
+
 ## [0.2.0] - 2026-05-11
 
 First breaking change since v0.1.x. Prompt-caching API is now a single

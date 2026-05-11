@@ -43,10 +43,13 @@ type inputItem struct {
 
 // inputContentPart is one piece of a message's content. Type indicates the
 // kind: "input_text" for user-written prompts, "output_text" for replayed
-// assistant text.
+// assistant text, "input_image" for image input (image_url is a
+// "data:<mime>;base64,<body>" string — the Responses API takes the URL
+// as a flat string here, unlike Chat Completions which nests it).
 type inputContentPart struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	ImageURL string `json:"image_url,omitempty"`
 }
 
 type apiTool struct {
@@ -106,24 +109,82 @@ func buildRequestBody(req llm.Request, effort ReasoningEffort, includeReasoningS
 // convertOutgoingMessage maps a llm.Message into one or more inputItems.
 // Tool-result messages expand into one function_call_output per
 // ToolResultBlock.
+//
+// ImageBlock is allowed only on user-role messages. Assistant- and
+// tool-role ImageBlocks are rejected at this boundary.
 func convertOutgoingMessage(m llm.Message) ([]inputItem, error) {
-	switch m.Role {
-	case llm.RoleUser:
-		var sb strings.Builder
+	if m.Role != llm.RoleUser {
 		for _, b := range m.Content {
-			if tb, ok := b.(llm.TextBlock); ok {
-				if sb.Len() > 0 {
-					sb.WriteString("\n")
-				}
-				sb.WriteString(tb.Text)
+			if _, ok := b.(llm.ImageBlock); ok {
+				return nil, fmt.Errorf("openai_responses: ImageBlock is only valid on user-role messages (got role %q)", m.Role)
 			}
 		}
+	}
+	switch m.Role {
+	case llm.RoleUser:
+		// Multimodal-aware: iterate content blocks in order, emitting one
+		// inputContentPart per text/image block. Text blocks within a
+		// single user message can be collapsed for the no-image fast
+		// path (smaller wire), but with images present we keep the
+		// per-block array so block order is preserved.
+		hasImage := false
+		for _, b := range m.Content {
+			if _, ok := b.(llm.ImageBlock); ok {
+				hasImage = true
+				break
+			}
+		}
+		if !hasImage {
+			var sb strings.Builder
+			for _, b := range m.Content {
+				if tb, ok := b.(llm.TextBlock); ok {
+					if sb.Len() > 0 {
+						sb.WriteString("\n")
+					}
+					sb.WriteString(tb.Text)
+				}
+			}
+			return []inputItem{{
+				Type: "message",
+				Role: "user",
+				Content: []inputContentPart{
+					{Type: "input_text", Text: sb.String()},
+				},
+			}}, nil
+		}
+
+		var parts []inputContentPart
+		for _, b := range m.Content {
+			switch v := b.(type) {
+			case llm.TextBlock:
+				parts = append(parts, inputContentPart{
+					Type: "input_text",
+					Text: v.Text,
+				})
+			case llm.ImageBlock:
+				if err := v.Validate(); err != nil {
+					return nil, fmt.Errorf("openai_responses: %w", err)
+				}
+				parts = append(parts, inputContentPart{
+					Type:     "input_image",
+					ImageURL: "data:" + v.MimeType + ";base64," + v.Data,
+				})
+			default:
+				// Ignore other block types on user messages.
+			}
+		}
+		if len(parts) == 0 {
+			// All blocks were unsupported types. Falling through to a
+			// content-less user message would emit `"content": null`,
+			// which the Responses API rejects. Emit an empty input_text
+			// instead — same shape as the text-only fast path with an
+			// empty string.
+			parts = []inputContentPart{{Type: "input_text", Text: ""}}
+		}
 		return []inputItem{{
-			Type: "message",
-			Role: "user",
-			Content: []inputContentPart{
-				{Type: "input_text", Text: sb.String()},
-			},
+			Type:    "message",
+			Role:    "user",
+			Content: parts,
 		}}, nil
 
 	case llm.RoleAssistant:
