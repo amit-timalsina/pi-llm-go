@@ -65,7 +65,7 @@ type apiTool struct {
 
 func buildRequestBody(req llm.Request) (io.Reader, error) {
 	if req.Model == "" {
-		return nil, fmt.Errorf("Model is required")
+		return nil, fmt.Errorf("model is required")
 	}
 
 	body := requestBody{

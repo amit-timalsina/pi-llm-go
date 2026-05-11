@@ -130,9 +130,9 @@ func TestStreamToolCall(t *testing.T) {
 	p := newProvider(t, srv)
 
 	final, err := llm.Complete(context.Background(), p, llm.Request{
-		Model: "gpt-5.4-mini",
+		Model:    "gpt-5.4-mini",
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "add 137 and 84"}}}},
-		Tools: []llm.Tool{{Name: "add", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+		Tools:    []llm.Tool{{Name: "add", InputSchema: json.RawMessage(`{"type":"object"}`)}},
 	})
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
@@ -235,7 +235,7 @@ func TestStreamRequestBodyShape(t *testing.T) {
 		IncludeReasoningSummary: true,
 	})
 	_, err := llm.Complete(context.Background(), p, llm.Request{
-		Model: "gpt-5.4-mini",
+		Model:  "gpt-5.4-mini",
 		System: "you are terse",
 		Messages: []llm.Message{
 			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}},
@@ -296,10 +296,10 @@ func TestStreamHTTPError(t *testing.T) {
 		t.Fatal("want error, got nil")
 	}
 	var apiErr *llm.APIError
-	if !(strings.Contains(gotErr.Error(), "bad key")) {
+	if !strings.Contains(gotErr.Error(), "bad key") {
 		t.Errorf("err missing body: %v", gotErr)
 	}
-	if !(apiErrCast(&apiErr, gotErr) && apiErr.Status == http.StatusUnauthorized) {
+	if !apiErrCast(&apiErr, gotErr) || apiErr.Status != http.StatusUnauthorized {
 		t.Errorf("APIError extraction failed: %v", gotErr)
 	}
 }

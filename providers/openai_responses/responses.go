@@ -7,14 +7,14 @@
 // When to pick which provider:
 //
 //   - providers/openai           — Chat Completions /v1/chat/completions.
-//                                  The workhorse, supports tool calling,
-//                                  works against every "OpenAI-compatible"
-//                                  host (OpenAI, Azure, Groq, Together,
-//                                  vLLM, OpenRouter, Ollama, …).
+//     The workhorse, supports tool calling,
+//     works against every "OpenAI-compatible"
+//     host (OpenAI, Azure, Groq, Together,
+//     vLLM, OpenRouter, Ollama, …).
 //   - providers/openai_responses — Responses /v1/responses. Required for
-//                                  GPT-5-family server-side state, reasoning
-//                                  summaries, and the built-in tool stack
-//                                  (web_search, file_search, code_interpreter).
+//     GPT-5-family server-side state, reasoning
+//     summaries, and the built-in tool stack
+//     (web_search, file_search, code_interpreter).
 //
 // At v1 this package covers a core slice of the 53-event Responses
 // streaming protocol: text output (response.output_text.delta/done),
@@ -37,8 +37,8 @@ import (
 	llm "github.com/amit-timalsina/pi-llm-go"
 )
 
-// Reasoning-effort levels supported by the Responses API on reasoning models
-// (GPT-5, o1, o3 families).
+// ReasoningEffort enumerates the reasoning-effort levels accepted by the
+// Responses API on reasoning-capable models (GPT-5, o1, o3 families).
 type ReasoningEffort string
 
 const (
@@ -166,7 +166,7 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 			yield(nil, fmt.Errorf("openai_responses: do request: %w", err))
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			respBody, _ := io.ReadAll(resp.Body)

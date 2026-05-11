@@ -6,10 +6,10 @@
 // they choose to render the thinking too.
 //
 // Two things this example shows:
-//   1. Enable thinking by setting llm.Request.Thinking on the request.
-//   2. Distinguish ThinkingBlock streaming from TextBlock streaming so a
-//      UI can render the two differently (dim/collapsed thinking, bold
-//      final answer).
+//  1. Enable thinking by setting llm.Request.Thinking on the request.
+//  2. Distinguish ThinkingBlock streaming from TextBlock streaming so a
+//     UI can render the two differently (dim/collapsed thinking, bold
+//     final answer).
 //
 // Usage:
 //

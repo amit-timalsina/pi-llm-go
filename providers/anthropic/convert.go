@@ -68,7 +68,7 @@ type apiThinkingConfig struct {
 // Returns the request body as an io.Reader for http.NewRequestWithContext.
 func buildRequestBody(req llm.Request) (io.Reader, error) {
 	if req.Model == "" {
-		return nil, fmt.Errorf("Model is required")
+		return nil, fmt.Errorf("model is required")
 	}
 	if req.MaxTokens <= 0 {
 		// Anthropic requires max_tokens. Pick a sane default rather than fail.

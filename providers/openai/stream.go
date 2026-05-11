@@ -18,8 +18,8 @@ type chunk struct {
 	ID      string `json:"id"`
 	Model   string `json:"model"`
 	Choices []struct {
-		Index        int `json:"index"`
-		Delta        struct {
+		Index int `json:"index"`
+		Delta struct {
 			Role      string `json:"role"`
 			Content   string `json:"content"`
 			ToolCalls []struct {
@@ -52,10 +52,9 @@ type streamDecoder struct {
 	// textOpened becomes true on the first non-empty content chunk; we emit
 	// EventTextStart lazily so messages with only tool calls don't get a
 	// leading empty text block.
-	textOpened    bool
-	textBlockIdx  int
-	finishReason  string
-	contentFilter error
+	textOpened   bool
+	textBlockIdx int
+	finishReason string
 
 	// toolCalls tracks one entry per tool_call index. Each entry knows its
 	// block index (post-text-block-or-0), accumulated arguments, and start-

@@ -21,7 +21,6 @@ package llm
 import (
 	"context"
 	"errors"
-	"fmt"
 	"iter"
 )
 
@@ -88,8 +87,3 @@ func Complete(ctx context.Context, l LLM, req Request) (*Message, error) {
 	}
 	return final, nil
 }
-
-// errStreamCanceled is returned when a caller breaks out of a Stream
-// iterator before it terminates. It is wrapped with context errors when
-// possible.
-var errStreamCanceled = fmt.Errorf("llm: stream canceled")

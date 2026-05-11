@@ -34,11 +34,11 @@ type reasoningOpts struct {
 // messages (with role+content), function call outputs (tool results), or
 // other types. We emit message + function_call_output here.
 type inputItem struct {
-	Type       string             `json:"type"`               // "message" | "function_call_output"
-	Role       string             `json:"role,omitempty"`     // for message: "user" | "assistant" | "system"
-	Content    []inputContentPart `json:"content,omitempty"`  // for message
-	CallID     string             `json:"call_id,omitempty"`  // for function_call_output
-	Output     string             `json:"output,omitempty"`   // for function_call_output
+	Type    string             `json:"type"`              // "message" | "function_call_output"
+	Role    string             `json:"role,omitempty"`    // for message: "user" | "assistant" | "system"
+	Content []inputContentPart `json:"content,omitempty"` // for message
+	CallID  string             `json:"call_id,omitempty"` // for function_call_output
+	Output  string             `json:"output,omitempty"`  // for function_call_output
 }
 
 // inputContentPart is one piece of a message's content. Type indicates the
@@ -50,7 +50,7 @@ type inputContentPart struct {
 }
 
 type apiTool struct {
-	Type        string          `json:"type"`        // "function"
+	Type        string          `json:"type"` // "function"
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters"`
@@ -59,7 +59,7 @@ type apiTool struct {
 // buildRequestBody serializes a llm.Request into Responses API format.
 func buildRequestBody(req llm.Request, effort ReasoningEffort, includeReasoningSummary bool) (io.Reader, error) {
 	if req.Model == "" {
-		return nil, fmt.Errorf("Model is required")
+		return nil, fmt.Errorf("model is required")
 	}
 	body := requestBody{
 		Model:        req.Model,
