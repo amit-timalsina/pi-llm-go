@@ -183,6 +183,15 @@ func TestStreamBodyShape(t *testing.T) {
 	if streamOpts["include_usage"] != true {
 		t.Errorf("include_usage missing")
 	}
+	// GPT-5, o1, and successors reject the legacy max_tokens field. We send
+	// max_completion_tokens unconditionally; this assertion prevents a
+	// regression where someone restores the old field name.
+	if v, ok := body["max_completion_tokens"].(float64); !ok || v != 256 {
+		t.Errorf("max_completion_tokens=%v (want 256)", body["max_completion_tokens"])
+	}
+	if _, ok := body["max_tokens"]; ok {
+		t.Errorf("legacy max_tokens field must not be sent")
+	}
 }
 
 func TestStreamToolResultRoundTrip(t *testing.T) {

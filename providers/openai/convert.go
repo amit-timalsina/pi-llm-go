@@ -11,15 +11,21 @@ import (
 )
 
 // requestBody is the wire shape sent to /v1/chat/completions.
+//
+// max_completion_tokens (not max_tokens) is used: OpenAI deprecated
+// max_tokens in late 2024; GPT-5, o1, o3 and similar reject the legacy
+// field outright. All modern OpenAI-compatible hosts (OpenAI, Azure
+// OpenAI, Groq, Together, vLLM v0.5+, Ollama recent versions) accept
+// the new name.
 type requestBody struct {
-	Model         string          `json:"model"`
-	Messages      []apiMessage    `json:"messages"`
-	Tools         []apiTool       `json:"tools,omitempty"`
-	Stream        bool            `json:"stream"`
-	StreamOptions *streamOptions  `json:"stream_options,omitempty"`
-	Temperature   *float64        `json:"temperature,omitempty"`
-	MaxTokens     int             `json:"max_tokens,omitempty"`
-	Stop          []string        `json:"stop,omitempty"`
+	Model               string         `json:"model"`
+	Messages            []apiMessage   `json:"messages"`
+	Tools               []apiTool      `json:"tools,omitempty"`
+	Stream              bool           `json:"stream"`
+	StreamOptions       *streamOptions `json:"stream_options,omitempty"`
+	Temperature         *float64       `json:"temperature,omitempty"`
+	MaxCompletionTokens int            `json:"max_completion_tokens,omitempty"`
+	Stop                []string       `json:"stop,omitempty"`
 }
 
 // streamOptions opts into the usage block at the tail of the stream.
@@ -63,12 +69,12 @@ func buildRequestBody(req llm.Request) (io.Reader, error) {
 	}
 
 	body := requestBody{
-		Model:         req.Model,
-		Stream:        true,
-		StreamOptions: &streamOptions{IncludeUsage: true},
-		Temperature:   req.Temperature,
-		MaxTokens:     req.MaxTokens,
-		Stop:          req.StopReasons,
+		Model:               req.Model,
+		Stream:              true,
+		StreamOptions:       &streamOptions{IncludeUsage: true},
+		Temperature:         req.Temperature,
+		MaxCompletionTokens: req.MaxTokens,
+		Stop:                req.StopReasons,
 	}
 
 	// System prompt becomes a prepended system message.
