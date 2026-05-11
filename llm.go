@@ -61,6 +61,11 @@ type ThinkingConfig struct {
 	// BudgetTokens is the maximum number of thinking tokens the model may
 	// emit before producing the final response. Required when ThinkingConfig
 	// is non-nil. Provider minimums apply (Anthropic: 1024).
+	//
+	// IMPORTANT: Anthropic requires Request.MaxTokens > BudgetTokens because
+	// thinking tokens are counted against max_tokens. A common safe choice
+	// is MaxTokens == BudgetTokens * 2, giving roughly equal budget to the
+	// reasoning trace and the visible answer.
 	BudgetTokens int
 }
 
