@@ -144,23 +144,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	var ttl *llm.CacheControl
+	retention := llm.CacheRetentionShort
 	if *useLongTTL {
-		ttl = llm.EphemeralLong()
-	} else {
-		ttl = llm.Ephemeral()
+		retention = llm.CacheRetentionLong
 	}
 
-	// Cacheable prefix: long system prompt with a breakpoint at its end.
-	// Anthropic considers the request's prefix (system + prior message blocks)
-	// cacheable up to and including any block bearing cache_control. Set
-	// the marker on the system prompt itself so each iteration's prefix
-	// is "system prompt only" and can hit cache.
+	// Cacheable prefix: long system prompt + tool registry. Setting
+	// CacheRetention asks the provider to auto-place ephemeral breakpoints
+	// at the static prefix boundary (system trailing block, last tool, last
+	// user text block). Anthropic returns a cache hit on byte-identical
+	// prefixes in subsequent requests.
 	baseReq := llm.Request{
-		Model:              anthropic.ClaudeSonnet4_6,
-		System:             stableSystem,
-		SystemCacheControl: ttl,
-		MaxTokens:          512,
+		Model:          anthropic.ClaudeSonnet4_6,
+		System:         stableSystem,
+		CacheRetention: retention,
+		MaxTokens:      512,
 	}
 
 	// Make the prompt long enough to be cacheable. Anthropic's minimum
@@ -173,9 +171,6 @@ func main() {
 			InputSchema: []byte(`{"type":"object","properties":{},"additionalProperties":false}`),
 		})
 	}
-	// Shortcut: mark the last tool as a cache breakpoint via the request-
-	// level helper — caches the full tools section as part of the prefix.
-	baseReq.ToolsCacheControl = ttl
 
 	ctx := context.Background()
 	// Two self-contained prompts — each iteration is an independent
