@@ -18,6 +18,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - OpenAI-compatible Chat Completions provider (`providers/openai`):
   text streaming, tool calling, normalized stop reasons, multi-tool-result
   message expansion at the boundary.
+- OpenAI Responses API provider (`providers/openai_responses`):
+  /v1/responses endpoint covering text, function tool calls, reasoning
+  summaries (mapped to llm.ThinkingBlock), response lifecycle envelope.
+  Required for GPT-5-family server-side state, reasoning summaries, and
+  the built-in tool stack. Supports OpenAI directly and Azure OpenAI /
+  Azure AI Services via URL + Headers options. Includes ReasoningEffort
+  and IncludeReasoningSummary options.
 - `openai.Options.URL` field: full chat-completions endpoint URL override.
   Required for Azure OpenAI, whose endpoint embeds a deployment name and
   api-version query.
@@ -31,6 +38,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - `examples/multi_turn` — manual transcript management across turns.
   - `examples/thinking` — extended thinking with ANSI-styled output.
   - `examples/azure_openai` — Azure OpenAI via data-plane key or AAD token.
+  - `examples/openai_responses` — Responses API with optional reasoning
+    summary streaming, against OpenAI or Azure.
 - Model-id convenience constants in each provider package
   (Claude Opus 4.7 / Sonnet 4.6 / Haiku 4.5; GPT-5.5 / 5.4 / 5.4-mini /
   5.4-nano / 4.1).
