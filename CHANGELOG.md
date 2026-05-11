@@ -9,10 +9,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - `llm.ImageBlock` — sealed `Block` extension for multimodal image
-  input. Shape: `{Data: <base64>, MimeType: <mime>}`. Base64-only at the
-  API surface (caller fetches their own URLs first); MimeType is required.
+  **input** (user-role messages only — assistant/tool ImageBlocks are
+  rejected at the wire boundary). Shape: `{Data: <base64>, MimeType: <mime>}`.
+  Base64-only at the API surface (caller fetches their own URLs first);
+  `MimeType` is required. `ImageBlock.Validate()` rejects empty fields
+  and a leading `"data:"` URI prefix in `Data` (common foot-gun).
   Portable across providers when the MIME is one of `image/jpeg`,
   `image/png`, `image/gif`, `image/webp`.
+  Assistant image **output** is a separate, future feature; v0.3.0 is
+  input-only.
 - Anthropic provider: emits the standard `{type:"image", source:{type:"base64",
   media_type, data}}` wire shape. Image-only user messages get a
   synthetic "(see attached image)" text block prepended, matching the

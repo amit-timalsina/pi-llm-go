@@ -11,6 +11,52 @@ import (
 	"github.com/amit-timalsina/pi-llm-go/providers/openai"
 )
 
+// TestImageBlock_OpenAIEmptyContentOmitted verifies the wire-format
+// regression guard introduced when apiMessage.Content changed from
+// `string` to `any` to support multimodal arrays. The string-typed
+// field with `,omitempty` previously omitted empty strings; the
+// interface-typed field does NOT omit empty strings unless we set
+// the value to nil explicitly. Verify three paths:
+//
+//   - text-only user message with empty text — no "content" key
+//   - assistant message with only tool_calls (no text) — no "content" key
+//   - tool message with empty Content — no "content" key
+//
+// A regression here would break compatibility with strict OpenAI-
+// compatible hosts that reject `"content": ""`.
+func TestImageBlock_OpenAIEmptyContentOmitted(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p, _ := openai.New(openai.Options{APIKey: "test", BaseURL: srv.URL})
+
+	// Assistant message with ONLY a tool_call (no text); tool message
+	// with empty Content. Both should serialize without a "content" key.
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model: openai.GPT5_5,
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "go"}}},
+			{Role: llm.RoleAssistant, Content: []llm.Block{
+				llm.ToolCallBlock{ID: "c1", Name: "x", Arguments: json.RawMessage(`{}`)},
+			}},
+			{Role: llm.RoleTool, Content: []llm.Block{
+				llm.ToolResultBlock{ToolCallID: "c1", Content: ""},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	// Search the raw body for the regression substring. JSON-decoding to
+	// a map would obscure it because `"content":""` would deserialize as
+	// `"content": ""` and look the same as the absent case after the fact.
+	body := string(fs.lastBody)
+	if strings.Contains(body, `"content":""`) {
+		t.Errorf("regression: empty content was emitted as \"content\":\"\"; should be omitted entirely.\nBody:\n%s", body)
+	}
+}
+
 // Reuses textOnlyPayload + fakeServer + newProvider from openai_test.go.
 
 const tinyPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
@@ -143,7 +189,8 @@ func TestImageBlock_OpenAIMultipleImagesPreserveOrder(t *testing.T) {
 }
 
 // TestImageBlock_OpenAIRejectsEmptyData mirrors the Anthropic boundary
-// validation: empty Data or MimeType returns an error.
+// validation: empty Data, empty MimeType, or a "data:" URI prefix all
+// return an error.
 func TestImageBlock_OpenAIRejectsEmptyData(t *testing.T) {
 	fs := &fakeServer{payload: textOnlyPayload}
 	srv := httptest.NewServer(fs.handler())
@@ -156,6 +203,10 @@ func TestImageBlock_OpenAIRejectsEmptyData(t *testing.T) {
 	}{
 		{"empty Data", llm.ImageBlock{Data: "", MimeType: "image/png"}},
 		{"empty MimeType", llm.ImageBlock{Data: tinyPNGBase64, MimeType: ""}},
+		{"data: URI prefix in Data", llm.ImageBlock{
+			Data:     "data:image/png;base64," + tinyPNGBase64,
+			MimeType: "image/png",
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -169,5 +220,64 @@ func TestImageBlock_OpenAIRejectsEmptyData(t *testing.T) {
 				t.Errorf("expected error for %s; got nil", tc.name)
 			}
 		})
+	}
+}
+
+// TestImageBlock_OpenAIRejectsNonUserRoles verifies the role guard:
+// ImageBlock on assistant/tool messages errors at the boundary.
+func TestImageBlock_OpenAIRejectsNonUserRoles(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p, _ := openai.New(openai.Options{APIKey: "test", BaseURL: srv.URL})
+
+	roles := []llm.Role{llm.RoleAssistant, llm.RoleTool}
+	for _, role := range roles {
+		t.Run(string(role), func(t *testing.T) {
+			_, err := llm.Complete(context.Background(), p, llm.Request{
+				Model: openai.GPT5_5,
+				Messages: []llm.Message{
+					{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "go"}}},
+					{Role: role, Content: []llm.Block{
+						llm.ImageBlock{Data: tinyPNGBase64, MimeType: "image/png"},
+					}},
+				},
+			})
+			if err == nil {
+				t.Errorf("expected role-guard error for role=%s; got nil", role)
+			}
+		})
+	}
+}
+
+// TestImageBlock_OpenAIImageOnlyNoPlaceholder verifies the asymmetry
+// vs Anthropic: OpenAI Chat Completions accepts image-only user
+// messages, so no synthetic placeholder text is injected. The wire
+// array should contain exactly one image_url part.
+func TestImageBlock_OpenAIImageOnlyNoPlaceholder(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p, _ := openai.New(openai.Options{APIKey: "test", BaseURL: srv.URL})
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model: openai.GPT5_5,
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{
+				llm.ImageBlock{Data: tinyPNGBase64, MimeType: "image/png"},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	content := body["messages"].([]any)[0].(map[string]any)["content"].([]any)
+	if len(content) != 1 {
+		t.Errorf("image-only user message: got %d content parts, want exactly 1 (no placeholder)", len(content))
+	}
+	if content[0].(map[string]any)["type"] != "image_url" {
+		t.Errorf("solo part should be image_url; got %+v", content[0])
 	}
 }

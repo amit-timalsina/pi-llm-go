@@ -109,7 +109,17 @@ func buildRequestBody(req llm.Request, effort ReasoningEffort, includeReasoningS
 // convertOutgoingMessage maps a llm.Message into one or more inputItems.
 // Tool-result messages expand into one function_call_output per
 // ToolResultBlock.
+//
+// ImageBlock is allowed only on user-role messages. Assistant- and
+// tool-role ImageBlocks are rejected at this boundary.
 func convertOutgoingMessage(m llm.Message) ([]inputItem, error) {
+	if m.Role != llm.RoleUser {
+		for _, b := range m.Content {
+			if _, ok := b.(llm.ImageBlock); ok {
+				return nil, fmt.Errorf("openai_responses: ImageBlock is only valid on user-role messages (got role %q)", m.Role)
+			}
+		}
+	}
 	switch m.Role {
 	case llm.RoleUser:
 		// Multimodal-aware: iterate content blocks in order, emitting one
@@ -152,11 +162,8 @@ func convertOutgoingMessage(m llm.Message) ([]inputItem, error) {
 					Text: v.Text,
 				})
 			case llm.ImageBlock:
-				if v.Data == "" {
-					return nil, fmt.Errorf("openai_responses: ImageBlock.Data is empty")
-				}
-				if v.MimeType == "" {
-					return nil, fmt.Errorf("openai_responses: ImageBlock.MimeType is empty")
+				if err := v.Validate(); err != nil {
+					return nil, fmt.Errorf("openai_responses: %w", err)
 				}
 				parts = append(parts, inputContentPart{
 					Type:     "input_image",
@@ -165,6 +172,14 @@ func convertOutgoingMessage(m llm.Message) ([]inputItem, error) {
 			default:
 				// Ignore other block types on user messages.
 			}
+		}
+		if len(parts) == 0 {
+			// All blocks were unsupported types. Falling through to a
+			// content-less user message would emit `"content": null`,
+			// which the Responses API rejects. Emit an empty input_text
+			// instead — same shape as the text-only fast path with an
+			// empty string.
+			parts = []inputContentPart{{Type: "input_text", Text: ""}}
 		}
 		return []inputItem{{
 			Type:    "message",

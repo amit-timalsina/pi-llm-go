@@ -191,8 +191,8 @@ func TestImageBlock_AnthropicMultipleImagesPreserveOrder(t *testing.T) {
 }
 
 // TestImageBlock_AnthropicRejectsEmptyData covers the boundary
-// validation: empty Data or MimeType returns an error rather than
-// emitting an obviously-broken wire payload.
+// validation: empty Data, empty MimeType, or a leading "data:" URI
+// prefix all return an error rather than emitting a broken payload.
 func TestImageBlock_AnthropicRejectsEmptyData(t *testing.T) {
 	fs := &fakeServer{payload: textOnlyPayload}
 	srv := httptest.NewServer(fs.handler())
@@ -205,6 +205,10 @@ func TestImageBlock_AnthropicRejectsEmptyData(t *testing.T) {
 	}{
 		{"empty Data", llm.ImageBlock{Data: "", MimeType: "image/png"}},
 		{"empty MimeType", llm.ImageBlock{Data: tinyPNGBase64, MimeType: ""}},
+		{"data: URI prefix in Data", llm.ImageBlock{
+			Data:     "data:image/png;base64," + tinyPNGBase64,
+			MimeType: "image/png",
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -219,5 +223,122 @@ func TestImageBlock_AnthropicRejectsEmptyData(t *testing.T) {
 				t.Errorf("expected error for %s; got nil", tc.name)
 			}
 		})
+	}
+}
+
+// TestImageBlock_AnthropicRejectsNonUserRoles verifies the role guard:
+// ImageBlock is only valid on user-role messages. Assistant/tool with
+// an embedded ImageBlock should error at the boundary instead of
+// silently emitting bad wire data.
+func TestImageBlock_AnthropicRejectsNonUserRoles(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	roles := []llm.Role{llm.RoleAssistant, llm.RoleTool}
+	for _, role := range roles {
+		t.Run(string(role), func(t *testing.T) {
+			_, err := llm.Complete(context.Background(), p, llm.Request{
+				Model:     anthropic.ClaudeSonnet4_6,
+				MaxTokens: 64,
+				Messages: []llm.Message{
+					{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "go"}}},
+					{Role: role, Content: []llm.Block{
+						llm.ImageBlock{Data: tinyPNGBase64, MimeType: "image/png"},
+					}},
+				},
+			})
+			if err == nil {
+				t.Errorf("expected role-guard error for role=%s; got nil", role)
+			}
+		})
+	}
+}
+
+// TestImageBlock_AnthropicImageInHistoryRoundTrip verifies that an
+// image in an earlier user turn survives the wire conversion when a
+// later message references it implicitly. The placeholder rule must
+// only apply to the SAME message that lacks text — not to earlier
+// turns whose images are accompanied by tool round-trips.
+func TestImageBlock_AnthropicImageInHistoryRoundTrip(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:     anthropic.ClaudeSonnet4_6,
+		MaxTokens: 64,
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{
+				llm.TextBlock{Text: "what is in this image?"},
+				llm.ImageBlock{Data: tinyPNGBase64, MimeType: "image/png"},
+			}},
+			{Role: llm.RoleAssistant, Content: []llm.Block{
+				llm.TextBlock{Text: "i see a 1x1 pixel"},
+			}},
+			{Role: llm.RoleUser, Content: []llm.Block{
+				llm.TextBlock{Text: "follow up"},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	msgs := body["messages"].([]any)
+	if len(msgs) != 3 {
+		t.Fatalf("wire messages=%d, want 3", len(msgs))
+	}
+	// First wire message: user with [text, image]. No placeholder because
+	// the message already has a text block; the count must be exactly 2.
+	firstContent := msgs[0].(map[string]any)["content"].([]any)
+	if len(firstContent) != 2 {
+		t.Errorf("first user message content len=%d, want 2 (no placeholder)", len(firstContent))
+	}
+	if firstContent[1].(map[string]any)["type"] != "image" {
+		t.Errorf("first user message: second block should be image; got %+v", firstContent[1])
+	}
+}
+
+// TestImageBlock_AnthropicCacheMarkerLandsOnImage verifies that when
+// CacheRetention is enabled and the trailing block of the last user
+// message is an ImageBlock, the cache_control marker correctly lands
+// on the image block (Anthropic supports cache_control on images).
+func TestImageBlock_AnthropicCacheMarkerLandsOnImage(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:          anthropic.ClaudeSonnet4_6,
+		MaxTokens:      64,
+		CacheRetention: llm.CacheRetentionShort,
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{
+				llm.TextBlock{Text: "describe"},
+				llm.ImageBlock{Data: tinyPNGBase64, MimeType: "image/png"},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	content := body["messages"].([]any)[0].(map[string]any)["content"].([]any)
+	trailing := content[len(content)-1].(map[string]any)
+	if trailing["type"] != "image" {
+		t.Fatalf("expected trailing block to be image; got %+v", trailing)
+	}
+	cc, ok := trailing["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatalf("trailing image missing cache_control: %+v", trailing)
+	}
+	if cc["type"] != "ephemeral" {
+		t.Errorf("cache_control.type=%v, want ephemeral", cc["type"])
 	}
 }

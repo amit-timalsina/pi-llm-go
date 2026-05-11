@@ -1,6 +1,10 @@
 package llm
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+	"strings"
+)
 
 // Role enumerates message roles in a transcript. RoleTool messages carry
 // tool results back to the model and may hold only ToolResultBlock content.
@@ -118,3 +122,23 @@ func (ThinkingBlock) isBlock()   {}
 func (ToolCallBlock) isBlock()   {}
 func (ToolResultBlock) isBlock() {}
 func (ImageBlock) isBlock()      {}
+
+// Validate enforces the ImageBlock contract: Data must be raw
+// base64-encoded bytes (without the "data:<mime>;base64," URI prefix)
+// and MimeType must be set. Providers call this at the wire boundary
+// and surface a wrapped error if the contract is violated.
+func (i ImageBlock) Validate() error {
+	if i.Data == "" {
+		return errors.New("ImageBlock: Data is empty")
+	}
+	if i.MimeType == "" {
+		return errors.New("ImageBlock: MimeType is empty")
+	}
+	// Common foot-gun: callers paste a `data:<mime>;base64,<body>` URI
+	// into Data. Providers then build `data:data:<mime>;base64,<mime>...`
+	// — clearly broken. Reject early.
+	if strings.HasPrefix(i.Data, "data:") {
+		return errors.New("ImageBlock: Data must be raw base64; remove the leading \"data:\" URI prefix")
+	}
+	return nil
+}

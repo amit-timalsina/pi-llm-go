@@ -113,7 +113,8 @@ func TestImageBlock_ResponsesTextOnlyStaysCollapsed(t *testing.T) {
 }
 
 // TestImageBlock_ResponsesRejectsEmptyData mirrors the boundary
-// validation of the other providers.
+// validation: empty Data, empty MimeType, or a "data:" URI prefix all
+// return an error.
 func TestImageBlock_ResponsesRejectsEmptyData(t *testing.T) {
 	fs := &fakeServer{payload: textOnlyPayload}
 	srv := httptest.NewServer(fs.handler())
@@ -126,6 +127,10 @@ func TestImageBlock_ResponsesRejectsEmptyData(t *testing.T) {
 	}{
 		{"empty Data", llm.ImageBlock{Data: "", MimeType: "image/png"}},
 		{"empty MimeType", llm.ImageBlock{Data: tinyPNGBase64, MimeType: ""}},
+		{"data: URI prefix in Data", llm.ImageBlock{
+			Data:     "data:image/png;base64," + tinyPNGBase64,
+			MimeType: "image/png",
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,6 +142,33 @@ func TestImageBlock_ResponsesRejectsEmptyData(t *testing.T) {
 			})
 			if err == nil {
 				t.Errorf("expected error for %s; got nil", tc.name)
+			}
+		})
+	}
+}
+
+// TestImageBlock_ResponsesRejectsNonUserRoles verifies the role guard
+// on the Responses API: ImageBlock outside user role errors.
+func TestImageBlock_ResponsesRejectsNonUserRoles(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	roles := []llm.Role{llm.RoleAssistant, llm.RoleTool}
+	for _, role := range roles {
+		t.Run(string(role), func(t *testing.T) {
+			_, err := llm.Complete(context.Background(), p, llm.Request{
+				Model: "gpt-5.5",
+				Messages: []llm.Message{
+					{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "go"}}},
+					{Role: role, Content: []llm.Block{
+						llm.ImageBlock{Data: tinyPNGBase64, MimeType: "image/png"},
+					}},
+				},
+			})
+			if err == nil {
+				t.Errorf("expected role-guard error for role=%s; got nil", role)
 			}
 		})
 	}

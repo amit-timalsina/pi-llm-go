@@ -232,10 +232,23 @@ func placeUserCacheMarker(messages []apiMessage, marker *apiCacheControl) {
 // "(see attached image)" text block prepended. Anthropic's API works
 // best when image input is accompanied by at least one text block;
 // this matches Mario Zechner's pi-ai placeholder convention.
+//
+// ImageBlock is allowed only on user-role messages. Assistant- and
+// tool-role ImageBlocks are rejected at this boundary because (a)
+// Anthropic does not accept images in those roles on the wire and (b)
+// silently dropping them would make a model-bug look like a library-bug.
 func convertOutgoingMessage(m llm.Message) (apiMessage, error) {
 	role := string(m.Role)
 	if m.Role == llm.RoleTool {
 		role = "user"
+	}
+
+	if m.Role != llm.RoleUser {
+		for _, b := range m.Content {
+			if _, ok := b.(llm.ImageBlock); ok {
+				return apiMessage{}, fmt.Errorf("anthropic: ImageBlock is only valid on user-role messages (got role %q)", m.Role)
+			}
+		}
 	}
 
 	apiMsg := apiMessage{Role: role}
@@ -302,11 +315,8 @@ func convertOutgoingBlock(b llm.Block) (apiBlock, error) {
 			IsError:   v.IsError,
 		}, nil
 	case llm.ImageBlock:
-		if v.Data == "" {
-			return apiBlock{}, fmt.Errorf("anthropic: ImageBlock.Data is empty")
-		}
-		if v.MimeType == "" {
-			return apiBlock{}, fmt.Errorf("anthropic: ImageBlock.MimeType is empty")
+		if err := v.Validate(); err != nil {
+			return apiBlock{}, fmt.Errorf("anthropic: %w", err)
 		}
 		return apiBlock{
 			Type: "image",
