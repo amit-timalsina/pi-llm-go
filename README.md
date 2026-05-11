@@ -1,6 +1,11 @@
 # pi-llm-go
 
-A minimal, Go-native LLM adapter with streaming, tool calling, and extended thinking. Provider-agnostic interface with built-in support for **Anthropic Messages** and **OpenAI-compatible Chat Completions** (covering OpenAI, Groq, Together, vLLM, OpenRouter, Ollama, and similar).
+[![CI](https://github.com/amit-timalsina/pi-llm-go/actions/workflows/ci.yml/badge.svg)](https://github.com/amit-timalsina/pi-llm-go/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/amit-timalsina/pi-llm-go.svg)](https://pkg.go.dev/github.com/amit-timalsina/pi-llm-go)
+[![Go Report Card](https://goreportcard.com/badge/github.com/amit-timalsina/pi-llm-go)](https://goreportcard.com/report/github.com/amit-timalsina/pi-llm-go)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+A minimal, Go-native LLM adapter with streaming, tool calling, and extended thinking. Provider-agnostic interface with built-in support for **Anthropic Messages**, **OpenAI Chat Completions** (covering OpenAI, Azure OpenAI, Groq, Together, vLLM, OpenRouter, Ollama), and the **OpenAI Responses API** (GPT-5-family server-side state + reasoning summaries).
 
 > Status: **v0.x — pre-1.0**. API may change between minor versions; see [CHANGELOG.md](CHANGELOG.md).
 
