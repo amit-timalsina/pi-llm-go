@@ -6,6 +6,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-05-11
+
+Initial public release. Real-API verified against Anthropic (streaming,
+tool calling, extended thinking) and Azure OpenAI (Chat Completions
+endpoint with GPT-5.4-mini, plus the Responses API with reasoning
+summaries).
+
 ### Added
 
 - Initial release skeleton: `LLM` interface, `Request`, `Message`, `Block`
@@ -57,4 +64,5 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.0.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/amit-timalsina/pi-llm-go/releases/tag/v0.1.0
