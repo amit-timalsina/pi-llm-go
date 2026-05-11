@@ -17,3 +17,8 @@
 /coverage.out
 *.prof
 *.test
+
+# Local environment files. .env holds API keys for the prompt_caching /
+# streaming examples; must never be committed.
+.env
+.env.*

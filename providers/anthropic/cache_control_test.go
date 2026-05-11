@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	llm "github.com/amit-timalsina/pi-llm-go"
@@ -183,12 +184,13 @@ func TestCacheRetention_LongAddsTTLAndBetaHeader(t *testing.T) {
 	}
 }
 
-// TestCacheRetention_UserMarkerWalksBackPastToolResult verifies the
-// placement algorithm skips a trailing tool_result-only user message and
-// marks the previous user message that has a text block. This is the
-// shape after a tool round-trip: tool result is in a "user" role message
-// with no text blocks.
-func TestCacheRetention_UserMarkerWalksBackPastToolResult(t *testing.T) {
+// TestCacheRetention_UserMarkerLandsOnTrailingToolResult verifies the
+// placement algorithm marks the LAST block of the most recent user-role
+// message, even when that block is a tool_result (the trailing block
+// after a tool round-trip). This matches Mario Zechner's pi-ai design
+// and keeps the full tool round-trip inside the cached prefix on the
+// next call.
+func TestCacheRetention_UserMarkerLandsOnTrailingToolResult(t *testing.T) {
 	fs := &fakeServer{payload: textOnlyPayload}
 	srv := httptest.NewServer(fs.handler())
 	defer srv.Close()
@@ -216,24 +218,64 @@ func TestCacheRetention_UserMarkerWalksBackPastToolResult(t *testing.T) {
 	_ = json.Unmarshal(fs.lastBody, &body)
 	msgs := body["messages"].([]any)
 
-	// Tool result (last user-role message on the wire) must NOT carry the marker.
+	// Last wire message is the user-role tool_result; the marker lands
+	// on the tool_result block (its only block, also the trailing block).
 	last := msgs[len(msgs)-1].(map[string]any)
 	if last["role"] != "user" {
 		t.Fatalf("expected last wire message to be user-role tool_result; got role=%v", last["role"])
 	}
-	for _, raw := range last["content"].([]any) {
-		if _, has := raw.(map[string]any)["cache_control"]; has {
-			t.Errorf("tool_result block should NOT carry cache_control: %+v", raw)
-		}
+	lastBlocks := last["content"].([]any)
+	trailing := lastBlocks[len(lastBlocks)-1].(map[string]any)
+	if trailing["type"] != "tool_result" {
+		t.Fatalf("expected trailing block to be tool_result; got type=%v", trailing["type"])
+	}
+	cc, ok := trailing["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool_result block missing cache_control: %+v", trailing)
+	}
+	if cc["type"] != "ephemeral" {
+		t.Errorf("tool_result cache_control.type=%v, want ephemeral", cc["type"])
 	}
 
-	// Earlier user message's text block must carry it.
+	// Earlier user-role text block must NOT carry it (only the trailing
+	// block of the most recent user-role message gets marked).
 	first := msgs[0].(map[string]any)
 	if first["role"] != "user" {
 		t.Fatalf("expected first wire message to be user; got %v", first["role"])
 	}
 	firstContent := first["content"].([]any)
-	if firstContent[0].(map[string]any)["cache_control"] == nil {
-		t.Errorf("earlier user text block missing cache_control marker")
+	if _, has := firstContent[0].(map[string]any)["cache_control"]; has {
+		t.Errorf("earlier user text block should NOT have cache_control")
+	}
+}
+
+// TestCacheRetention_ExplicitNoneEquivalentToZero verifies that an
+// explicit CacheRetentionNone produces byte-identical wire output to
+// the zero value — i.e. callers can compare via == llm.CacheRetentionNone
+// regardless of whether the field was left unset.
+func TestCacheRetention_ExplicitNoneEquivalentToZero(t *testing.T) {
+	if llm.CacheRetentionNone != "" {
+		t.Fatalf("CacheRetentionNone must be the zero value of CacheRetention; got %q", string(llm.CacheRetentionNone))
+	}
+
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:          anthropic.ClaudeSonnet4_6,
+		MaxTokens:      64,
+		CacheRetention: llm.CacheRetentionNone, // explicit
+		System:         "stable system",
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if strings.Contains(string(fs.lastBody), "cache_control") {
+		t.Errorf("explicit CacheRetentionNone unexpectedly emitted cache_control: %s", string(fs.lastBody))
 	}
 }

@@ -189,22 +189,25 @@ func cacheMarker(r llm.CacheRetention) *apiCacheControl {
 	}
 }
 
-// placeUserCacheMarker scans messages from the end and attaches the cache
-// marker to the last text block of the most recent user message. No-op if
-// no user message has a text block.
+// placeUserCacheMarker attaches the cache marker to the last block of
+// the most recent user-role message on the wire. Anthropic accepts
+// cache_control on every block type we emit (text, tool_use, tool_result,
+// thinking), so the placement is type-agnostic — that matches Mario's
+// pi-ai cacheRetention: by including the trailing tool_result block in
+// the cached prefix, subsequent calls in a tool loop reuse the full
+// round-trip from the cache instead of re-billing it as fresh input.
+// No-op if no user-role message exists or the last one has no content.
 func placeUserCacheMarker(messages []apiMessage, marker *apiCacheControl) {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role != "user" {
 			continue
 		}
-		for j := len(messages[i].Content) - 1; j >= 0; j-- {
-			if messages[i].Content[j].Type == "text" {
-				messages[i].Content[j].CacheControl = marker
-				return
-			}
+		content := messages[i].Content
+		if len(content) == 0 {
+			return
 		}
-		// User message had no text block (e.g. tool_result only); keep
-		// scanning earlier turns.
+		content[len(content)-1].CacheControl = marker
+		return
 	}
 }
 
