@@ -6,6 +6,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-11
+
+CI + lint cleanup. No behavioral change vs v0.1.0.
+
+### Added
+
+- Dependabot config for `gomod` + `github-actions` ecosystems (weekly).
+- README badges: CI status, Go Reference (pkg.go.dev), Go Report Card, MIT license.
+
+### Changed
+
+- Pinned `golangci-lint-action` to v8 and the linter binary to v2.12.2
+  (was v2.1.6, which panicked on Go 1.26 toolchain).
+- Removed the unused `errStreamCanceled` sentinel from `llm.go` and the
+  unused `contentFilter` field from `providers/openai/stream.go`.
+- Tightened error message capitalization (Go convention: lowercase first
+  letter) on three "model is required" build errors.
+- Wrapped three `defer resp.Body.Close()` calls so errcheck is satisfied.
+- Various godoc and gofmt -s normalizations.
+
 ## [0.1.0] - 2026-05-11
 
 Initial public release. Real-API verified against Anthropic (streaming,
@@ -64,5 +84,6 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/amit-timalsina/pi-llm-go/releases/tag/v0.1.0
