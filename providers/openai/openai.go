@@ -54,6 +54,32 @@ type Options struct {
 	HTTPClient *http.Client // default http.DefaultClient
 	OrgID      string       // optional, sent as OpenAI-Organization header
 	Project    string       // optional, sent as OpenAI-Project header
+
+	// URL, if non-empty, is used verbatim as the chat-completions endpoint
+	// instead of BaseURL + "/chat/completions". Use this for hosts where the
+	// chat path differs from the default — most notably Azure OpenAI, whose
+	// endpoint embeds a deployment name and an api-version query:
+	//
+	//   URL: "https://<resource>.cognitiveservices.azure.com/openai/deployments/<deployment>/chat/completions?api-version=2024-12-01-preview"
+	//
+	// When set, BaseURL is ignored.
+	URL string
+
+	// Headers are merged into the outgoing HTTP request, after the default
+	// headers are applied. Use this for hosts that require non-standard auth
+	// — most notably Azure OpenAI's "api-key: <value>" header (instead of
+	// the default "Authorization: Bearer ..."):
+	//
+	//   openai.New(openai.Options{
+	//       URL:     "https://<resource>.cognitiveservices.azure.com/...",
+	//       Headers: map[string]string{"api-key": dataPlaneKey},
+	//       // APIKey can be left empty; Headers supplies auth.
+	//   })
+	//
+	// If APIKey is also non-empty, "Authorization: Bearer <APIKey>" is set
+	// first; Headers can override it. Header values supplied here win over
+	// any default the provider would otherwise set.
+	Headers map[string]string
 }
 
 // Provider is the OpenAI-compatible implementation of llm.LLM. Safe for
@@ -61,15 +87,18 @@ type Options struct {
 type Provider struct {
 	apiKey  string
 	baseURL string
+	url     string
 	orgID   string
 	project string
+	headers map[string]string
 	client  *http.Client
 }
 
-// New constructs a Provider. APIKey is required.
+// New constructs a Provider. APIKey is required unless Headers supplies an
+// alternative authentication header (e.g. Azure's "api-key" header).
 func New(opts Options) (*Provider, error) {
-	if opts.APIKey == "" {
-		return nil, errors.New("openai: APIKey is required")
+	if opts.APIKey == "" && len(opts.Headers) == 0 {
+		return nil, errors.New("openai: APIKey or Headers (with auth header) is required")
 	}
 	if opts.BaseURL == "" {
 		opts.BaseURL = defaultBaseURL
@@ -77,13 +106,31 @@ func New(opts Options) (*Provider, error) {
 	if opts.HTTPClient == nil {
 		opts.HTTPClient = http.DefaultClient
 	}
+	// Copy the headers map so later caller mutations don't affect the provider.
+	var headers map[string]string
+	if len(opts.Headers) > 0 {
+		headers = make(map[string]string, len(opts.Headers))
+		for k, v := range opts.Headers {
+			headers[k] = v
+		}
+	}
 	return &Provider{
 		apiKey:  opts.APIKey,
 		baseURL: opts.BaseURL,
+		url:     opts.URL,
 		orgID:   opts.OrgID,
 		project: opts.Project,
+		headers: headers,
 		client:  opts.HTTPClient,
 	}, nil
+}
+
+// endpoint returns the URL the provider should POST to.
+func (p *Provider) endpoint() string {
+	if p.url != "" {
+		return p.url
+	}
+	return p.baseURL + "/chat/completions"
 }
 
 // Stream issues a streaming completion. Provider errors surface as
@@ -96,12 +143,14 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 			return
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/chat/completions", body)
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint(), body)
 		if err != nil {
 			yield(nil, fmt.Errorf("openai: new request: %w", err))
 			return
 		}
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+		if p.apiKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "text/event-stream")
 		if p.orgID != "" {
@@ -109,6 +158,11 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 		}
 		if p.project != "" {
 			httpReq.Header.Set("OpenAI-Project", p.project)
+		}
+		// User-supplied headers win over defaults — lets callers override
+		// auth (Azure's "api-key:" instead of "Authorization: Bearer").
+		for k, v := range p.headers {
+			httpReq.Header.Set(k, v)
 		}
 
 		resp, err := p.client.Do(httpReq)
