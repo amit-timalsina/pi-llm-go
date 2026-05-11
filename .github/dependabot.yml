@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # Keep go.mod fresh — patch/minor bumps for direct deps; major bumps
+  # surface as PRs we evaluate per-case.
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "gomod"
+    commit-message:
+      prefix: "deps"
+
+  # Keep GitHub Actions versions current (actions/checkout, setup-go,
+  # golangci-lint-action, cache).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "ci"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
