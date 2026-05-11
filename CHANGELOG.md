@@ -6,6 +6,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-11
+
+Multimodal image input across all three providers. WWMD-aligned with
+Mario Zechner's pi-ai. Input-only; assistant image output deferred.
+
 ### Added
 
 - `llm.ImageBlock` — sealed `Block` extension for multimodal image
@@ -161,7 +166,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/amit-timalsina/pi-llm-go/releases/tag/v0.1.0
