@@ -25,7 +25,7 @@ type requestBody struct {
 // functionResponse parts.
 type apiContent struct {
 	Role  string    `json:"role"`
-	Parts []apiPart `json:"parts"`
+	Parts []apiPart `json:"parts,omitempty"`
 }
 
 // apiSystem is the systemInstruction shape: a content with no role.
@@ -71,12 +71,24 @@ type apiVideoMetadata struct {
 	FPS         float64 `json:"fps,omitempty"`
 }
 
+// apiFunctionCall is the on-wire shape of an assistant-issued tool call.
+// Id is Gemini 3+ specific: the model emits a unique id per call so that
+// parallel calls to the same function can be disambiguated when the
+// response comes back. Gemini 2.x doesn't emit Id; we just leave it
+// empty in that case and fall back to matching by Name.
 type apiFunctionCall struct {
+	Id   string          `json:"id,omitempty"`
 	Name string          `json:"name"`
 	Args json.RawMessage `json:"args"`
 }
 
+// apiFunctionResp is the on-wire shape of a tool result going back to
+// the model. Name MUST be the function name (matching the original
+// functionDeclaration) — not a tool-call id. Id, when present, echoes
+// the id from the originating functionCall so Gemini 3+ can route
+// parallel responses correctly.
 type apiFunctionResp struct {
+	Id       string          `json:"id,omitempty"`
 	Name     string          `json:"name"`
 	Response json.RawMessage `json:"response"`
 }
@@ -153,12 +165,31 @@ func buildRequestBody(req llm.Request) (io.Reader, error) {
 		body.Tools = []apiTool{{FunctionDeclarations: decls}}
 	}
 
+	// Pre-walk to build a tool-call-id -> function-name index. Gemini's
+	// functionResponse.name MUST be the function name (matching the
+	// original functionDeclaration); pi-llm-go's ToolResultBlock only
+	// carries ToolCallID, so we look the name up from the originating
+	// assistant turn's ToolCallBlock. Without this, parallel calls to
+	// the same tool would still produce correct names, and unknown
+	// ids would emit name="" which Gemini rejects server-side.
+	toolNameByID := map[string]string{}
+	for _, m := range req.Messages {
+		if m.Role != llm.RoleAssistant {
+			continue
+		}
+		for _, b := range m.Content {
+			if tc, ok := b.(llm.ToolCallBlock); ok && tc.ID != "" {
+				toolNameByID[tc.ID] = tc.Name
+			}
+		}
+	}
+
 	// Walk the messages, folding tool-result messages into the prior
 	// user turn's parts. This sustains Gemini's expectation that
 	// functionResponse parts share a role-user turn with whatever text
 	// accompanies them.
 	for _, m := range req.Messages {
-		converted, err := convertOutgoingMessage(m)
+		converted, err := convertOutgoingMessage(m, toolNameByID)
 		if err != nil {
 			return nil, fmt.Errorf("convert message: %w", err)
 		}
@@ -192,7 +223,11 @@ func hasGenConfig(g *generationConfig) bool {
 // convertOutgoingMessage maps a llm.Message into Gemini's apiContent
 // shape. ImageBlock + VideoBlock are user-role-only (rejected
 // otherwise — same as the OpenAI / Anthropic boundary).
-func convertOutgoingMessage(m llm.Message) (apiContent, error) {
+//
+// toolNameByID resolves ToolResultBlock.ToolCallID to the original
+// function name so functionResponse.name matches Gemini's contract.
+// Built by the caller via a pre-walk of req.Messages.
+func convertOutgoingMessage(m llm.Message, toolNameByID map[string]string) (apiContent, error) {
 	// Role-guard: media blocks are user-only.
 	if m.Role != llm.RoleUser {
 		for _, b := range m.Content {
@@ -209,9 +244,15 @@ func convertOutgoingMessage(m llm.Message) (apiContent, error) {
 	out := apiContent{Role: role}
 
 	for _, block := range m.Content {
-		part, err := convertOutgoingBlock(block)
+		part, drop, err := convertOutgoingBlock(block, toolNameByID)
 		if err != nil {
 			return apiContent{}, err
+		}
+		if drop {
+			// e.g. ThinkingBlock on an outgoing message — Gemini doesn't
+			// accept thought parts as input; emitting an empty apiPart
+			// would put "{}" on the wire and the server would reject.
+			continue
 		}
 		out.Parts = append(out.Parts, part)
 	}
@@ -231,29 +272,38 @@ func geminiRole(r llm.Role) string {
 	}
 }
 
-func convertOutgoingBlock(b llm.Block) (apiPart, error) {
+// convertOutgoingBlock translates one llm.Block into a Gemini apiPart.
+// Returns (part, drop, err). drop=true means the block has no wire
+// representation (e.g. ThinkingBlock is never replayed outbound) and
+// the caller should skip the empty result instead of appending it.
+func convertOutgoingBlock(b llm.Block, toolNameByID map[string]string) (apiPart, bool, error) {
 	switch v := b.(type) {
 	case llm.TextBlock:
-		return apiPart{Text: v.Text}, nil
+		return apiPart{Text: v.Text}, false, nil
 
 	case llm.ThinkingBlock:
 		// Don't replay thinking on outgoing messages — Gemini doesn't
 		// accept thought parts as input, and round-tripping them via
 		// server-side state would require us to track a session id we
-		// don't expose at v0.4.0. Drop on send.
-		return apiPart{}, nil
+		// don't expose at v0.4.0. Drop on send; the caller filters.
+		return apiPart{}, true, nil
 
 	case llm.ToolCallBlock:
 		args := v.Arguments
 		if len(args) == 0 {
 			args = json.RawMessage("{}")
 		}
+		// v.ID carries Gemini 3's wire-level id when round-tripping a
+		// prior assistant turn back to the model. On Gemini 2.x it's
+		// pi-llm-go's synthesized fallback (the function name) which
+		// the server tolerates.
 		return apiPart{
 			FunctionCall: &apiFunctionCall{
+				Id:   v.ID,
 				Name: v.Name,
 				Args: args,
 			},
-		}, nil
+		}, false, nil
 
 	case llm.ToolResultBlock:
 		// Gemini expects functionResponse.response to be a JSON object,
@@ -264,35 +314,42 @@ func convertOutgoingBlock(b llm.Block) (apiPart, error) {
 		respObj := map[string]string{"result": v.Content}
 		respBytes, err := json.Marshal(respObj)
 		if err != nil {
-			return apiPart{}, fmt.Errorf("marshal tool result: %w", err)
+			return apiPart{}, false, fmt.Errorf("marshal tool result: %w", err)
 		}
-		// Gemini requires the functionResponse.name field — but
-		// pi-llm-go's ToolResultBlock only carries ToolCallID, not the
-		// originating function name. We pass the call id as the name;
-		// callers who need the original function name can preserve it
-		// in their tool-call dispatch layer. (Gemini accepts arbitrary
-		// strings here; the wire-level matching is by index, not name.)
+		// functionResponse.name MUST match a declared function name.
+		// Look it up from the assistant turn that issued the original
+		// call (toolNameByID built by buildRequestBody's pre-walk).
+		// If unresolvable, emit a clear error rather than letting the
+		// server reject the request opaquely.
+		fnName := toolNameByID[v.ToolCallID]
+		if fnName == "" {
+			return apiPart{}, false, fmt.Errorf(
+				"gemini: ToolResultBlock.ToolCallID %q has no matching ToolCallBlock in the prior assistant turn; functionResponse.name cannot be resolved",
+				v.ToolCallID,
+			)
+		}
 		return apiPart{
 			FunctionResponse: &apiFunctionResp{
-				Name:     v.ToolCallID,
+				Id:       v.ToolCallID, // echoes Gemini 3's id; harmless empty on 2.x
+				Name:     fnName,
 				Response: respBytes,
 			},
-		}, nil
+		}, false, nil
 
 	case llm.ImageBlock:
 		if err := v.Validate(); err != nil {
-			return apiPart{}, fmt.Errorf("gemini: %w", err)
+			return apiPart{}, false, fmt.Errorf("gemini: %w", err)
 		}
 		return apiPart{
 			InlineData: &apiBlob{
 				MimeType: v.MimeType,
 				Data:     v.Data,
 			},
-		}, nil
+		}, false, nil
 
 	case llm.VideoBlock:
 		if err := v.Validate(); err != nil {
-			return apiPart{}, fmt.Errorf("gemini: %w", err)
+			return apiPart{}, false, fmt.Errorf("gemini: %w", err)
 		}
 		part := apiPart{}
 		switch {
@@ -320,10 +377,10 @@ func convertOutgoingBlock(b llm.Block) (apiPart, error) {
 			}
 			part.VideoMetadata = meta
 		}
-		return part, nil
+		return part, false, nil
 
 	default:
-		return apiPart{}, fmt.Errorf("unsupported block type %T", b)
+		return apiPart{}, false, fmt.Errorf("unsupported block type %T", b)
 	}
 }
 

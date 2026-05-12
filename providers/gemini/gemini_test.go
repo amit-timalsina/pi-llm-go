@@ -74,8 +74,20 @@ data: {"candidates":[{"content":{"role":"model"},"finishReason":"STOP","index":0
 
 `
 
-// Function-call response, in one frame as Gemini emits whole tool calls.
-const toolCallPayload = `data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"echo","args":{"text":"hi"}}}],"role":"model"},"finishReason":"TOOL_CALL","index":0}],"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":5,"totalTokenCount":25}}
+// Function-call response. Gemini emits the call in one frame; the
+// finishReason is "STOP" because Gemini's enum has no tool-use
+// terminator (we synthesize StopReasonToolUse from the gotToolCall
+// flag in the accumulator). Gemini 3+ also emits a wire-level "id"
+// for parallel-call disambiguation; we include one here to lock the
+// round-trip.
+const toolCallPayload = `data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"call_abc123","name":"echo","args":{"text":"hi"}}}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":5,"totalTokenCount":25}}
+
+`
+
+// Function-call response WITHOUT an id field — Gemini 2.x emits no
+// id, and the accumulator falls back to using the function name as
+// the synthetic ToolCallBlock.ID for round-tripping.
+const toolCallPayloadNoID = `data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"echo","args":{"text":"hi"}}}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":5,"totalTokenCount":25}}
 
 `
 
@@ -187,9 +199,12 @@ func TestStream_MultiFrameText(t *testing.T) {
 	}
 }
 
-// TestStream_ToolCall verifies function-call parts map to
-// ToolCallBlock with the args preserved as raw JSON.
-func TestStream_ToolCall(t *testing.T) {
+// TestStream_ToolCall_Gemini3 verifies function-call parts map to
+// ToolCallBlock with the wire-level id (Gemini 3+) preserved in
+// ToolCallBlock.ID and the args preserved as raw JSON. Also verifies
+// StopReason is synthesized to ToolUse even though Gemini's
+// finishReason was STOP.
+func TestStream_ToolCall_Gemini3(t *testing.T) {
 	fs := &fakeServer{payload: toolCallPayload}
 	srv := httptest.NewServer(fs.handler())
 	defer srv.Close()
@@ -211,6 +226,9 @@ func TestStream_ToolCall(t *testing.T) {
 	if !ok {
 		t.Fatalf("Content[0]=%T, want ToolCallBlock", msg.Content[0])
 	}
+	if tc.ID != "call_abc123" {
+		t.Errorf("ToolCallBlock.ID=%q, want call_abc123 (Gemini 3 wire id)", tc.ID)
+	}
 	if tc.Name != "echo" {
 		t.Errorf("ToolCallBlock.Name=%q, want echo", tc.Name)
 	}
@@ -219,6 +237,37 @@ func TestStream_ToolCall(t *testing.T) {
 	_ = json.Unmarshal(tc.Arguments, &got)
 	if got["text"] != "hi" {
 		t.Errorf("args.text=%q, want hi", got["text"])
+	}
+	// Gemini's finishReason is STOP for tool-use turns; the provider
+	// must synthesize ToolUse from the presence of a functionCall part.
+	if msg.StopReason != llm.StopReasonToolUse {
+		t.Errorf("StopReason=%v, want ToolUse (synthesized from gotToolCall)", msg.StopReason)
+	}
+}
+
+// TestStream_ToolCall_Gemini2NoID covers Gemini 2.x's no-id behavior:
+// the wire functionCall omits id, and the accumulator falls back to
+// using the function name as the synthetic ToolCallBlock.ID so the
+// round-trip still works (just without parallel-call disambiguation
+// guarantees, which only Gemini 3+ provides).
+func TestStream_ToolCall_Gemini2NoID(t *testing.T) {
+	fs := &fakeServer{payload: toolCallPayloadNoID}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	msg, err := llm.Complete(context.Background(), p, llm.Request{
+		Model: gemini.Gemini2_5Flash,
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "call echo"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	tc := msg.Content[0].(llm.ToolCallBlock)
+	if tc.ID != "echo" {
+		t.Errorf("Gemini 2.x no-id fallback: ToolCallBlock.ID=%q, want %q (name as id)", tc.ID, "echo")
 	}
 	if msg.StopReason != llm.StopReasonToolUse {
 		t.Errorf("StopReason=%v, want ToolUse", msg.StopReason)
@@ -554,10 +603,14 @@ func TestRequest_SystemPrompt(t *testing.T) {
 	}
 }
 
-// TestRequest_ToolResultFoldsIntoUserTurn verifies the special-case
-// fold: an llm.RoleTool message appends its functionResponse parts
-// to the prior user turn, since Gemini has no separate tool role.
-func TestRequest_ToolResultFoldsIntoUserTurn(t *testing.T) {
+// TestRequest_ToolResult_FallsThroughWhenPriorIsAssistant verifies
+// that when the message immediately preceding a RoleTool message is
+// RoleAssistant (the typical agent-loop pattern), the tool message
+// becomes its OWN user content turn rather than folding. Gemini
+// accepts this because functionResponse parts on a fresh user turn
+// are wire-valid; the fold optimization only kicks in when there's a
+// prior user turn already.
+func TestRequest_ToolResult_FallsThroughWhenPriorIsAssistant(t *testing.T) {
 	fs := &fakeServer{payload: textOnlyPayload}
 	srv := httptest.NewServer(fs.handler())
 	defer srv.Close()
@@ -581,21 +634,158 @@ func TestRequest_ToolResultFoldsIntoUserTurn(t *testing.T) {
 	var body map[string]any
 	_ = json.Unmarshal(fs.lastBody, &body)
 	contents := body["contents"].([]any)
-	// Expect 2 contents (not 3): user, assistant. Tool result folded
-	// into... wait — the prior content to RoleTool is RoleAssistant,
-	// not RoleUser. The fold only happens when the prior content is
-	// already a user turn. Verify the documented fold-or-fall-through
-	// behavior: tool message becomes its OWN user content here.
 	if len(contents) != 3 {
-		t.Fatalf("contents=%d, want 3 (user, assistant, user-with-functionResponse)", len(contents))
+		t.Fatalf("contents=%d, want 3 (user, assistant, user-with-functionResponse) — no fold expected when prior is assistant", len(contents))
 	}
 	last := contents[2].(map[string]any)
 	if last["role"] != "user" {
 		t.Errorf("tool result content[2].role=%v, want user", last["role"])
 	}
 	fnResp := last["parts"].([]any)[0].(map[string]any)["functionResponse"].(map[string]any)
-	if fnResp["name"] != "echo_1" {
-		t.Errorf("functionResponse.name=%v, want echo_1 (the call id)", fnResp["name"])
+	// Must-fix #2 verification: functionResponse.name is the function
+	// name (looked up from the prior assistant turn's ToolCallBlock),
+	// NOT the ToolCallID.
+	if fnResp["name"] != "echo" {
+		t.Errorf("functionResponse.name=%v, want echo (function name resolved via toolNameByID, NOT the ToolCallID)", fnResp["name"])
+	}
+	if fnResp["id"] != "echo_1" {
+		t.Errorf("functionResponse.id=%v, want echo_1 (echoes the call's id for Gemini 3 disambiguation)", fnResp["id"])
+	}
+}
+
+// TestRequest_ToolResult_FoldsIntoPriorUserTurn exercises the actual
+// fold path: when a RoleTool message follows a RoleUser message
+// (Gemini's expected pattern for parallel tool turns), its parts
+// fold into the prior user turn rather than creating a new content.
+func TestRequest_ToolResult_FoldsIntoPriorUserTurn(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	if _, err := llm.Complete(context.Background(), p, llm.Request{
+		Model: gemini.Gemini2_5Flash,
+		Messages: []llm.Message{
+			{Role: llm.RoleAssistant, Content: []llm.Block{
+				llm.ToolCallBlock{ID: "echo_1", Name: "echo", Arguments: json.RawMessage(`{"text":"hi"}`)},
+			}},
+			{Role: llm.RoleUser, Content: []llm.Block{
+				llm.TextBlock{Text: "and also a follow-up"},
+			}},
+			// This tool message follows a user turn; should fold into it.
+			{Role: llm.RoleTool, Content: []llm.Block{
+				llm.ToolResultBlock{ToolCallID: "echo_1", Content: "echoed: hi"},
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	contents := body["contents"].([]any)
+	if len(contents) != 2 {
+		t.Fatalf("contents=%d, want 2 (assistant, user-with-text-and-folded-functionResponse)", len(contents))
+	}
+	userTurn := contents[1].(map[string]any)
+	if userTurn["role"] != "user" {
+		t.Errorf("contents[1].role=%v, want user", userTurn["role"])
+	}
+	parts := userTurn["parts"].([]any)
+	if len(parts) != 2 {
+		t.Fatalf("user turn parts=%d, want 2 (text + folded functionResponse)", len(parts))
+	}
+	if parts[0].(map[string]any)["text"] != "and also a follow-up" {
+		t.Errorf("first part should be the original text; got %+v", parts[0])
+	}
+	fnResp := parts[1].(map[string]any)["functionResponse"].(map[string]any)
+	if fnResp["name"] != "echo" {
+		t.Errorf("folded functionResponse.name=%v, want echo", fnResp["name"])
+	}
+}
+
+// TestRequest_ToolResult_UnresolvedToolCallID verifies the new
+// contract: if a ToolResultBlock's ToolCallID has no matching prior
+// ToolCallBlock, the conversion errors loudly instead of emitting
+// functionResponse.name="" (which Gemini rejects opaquely).
+func TestRequest_ToolResult_UnresolvedToolCallID(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model: gemini.Gemini2_5Flash,
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}},
+			// No prior ToolCallBlock — the tool result has no name to resolve.
+			{Role: llm.RoleTool, Content: []llm.Block{
+				llm.ToolResultBlock{ToolCallID: "orphan_call", Content: "oops"},
+			}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected unresolved-tool-call-id error; got nil")
+	}
+	if !strings.Contains(err.Error(), "orphan_call") {
+		t.Errorf("error %q should mention the unresolved id", err.Error())
+	}
+}
+
+// TestStream_CancellationTerminatesCleanly verifies that cancelling
+// the ctx mid-stream surfaces ctx.Err() from the iterator rather
+// than hanging or surfacing as a successful EventMessageEnd.
+func TestStream_CancellationTerminatesCleanly(t *testing.T) {
+	// Use a server that holds the connection open without sending the
+	// terminating frame, simulating a slow stream we cancel mid-flight.
+	holder := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		// Send one frame then hold until the connection drops.
+		_, _ = io.WriteString(w, `data: {"candidates":[{"content":{"parts":[{"text":"partial"}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}
+
+`)
+		// Flush so the client receives the first frame.
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-holder
+	}))
+	defer func() {
+		close(holder)
+		srv.Close()
+	}()
+	p := newProvider(t, srv)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel shortly after Stream starts.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	started := time.Now()
+	var sawErr error
+	for ev, err := range p.Stream(ctx, llm.Request{
+		Model: gemini.Gemini2_5Flash,
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}},
+		},
+	}) {
+		if err != nil {
+			sawErr = err
+			break
+		}
+		_ = ev
+	}
+	elapsed := time.Since(started)
+
+	if sawErr == nil {
+		t.Fatal("expected an error from cancelled stream; got nil")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("stream took %v to terminate after cancel; want < 2s", elapsed)
 	}
 }
 

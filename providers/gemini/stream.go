@@ -111,9 +111,10 @@ type streamAccumulator struct {
 	textOpen        bool
 	thinkingOpen    bool
 
-	lastUsage  *usageMetadata
-	stopReason llm.StopReason
-	gotFinish  bool
+	lastUsage   *usageMetadata
+	stopReason  llm.StopReason
+	gotFinish   bool
+	gotToolCall bool // any functionCall part seen this turn?
 }
 
 func newStreamAccumulator(modelHint string) *streamAccumulator {
@@ -151,12 +152,22 @@ func (a *streamAccumulator) consumePart(p apiPart) []llm.StreamEvent {
 	case p.FunctionCall != nil:
 		// Close any open prose block first.
 		events := a.closeOpen()
+		a.gotToolCall = true
+		// Prefer Gemini 3+'s wire-level id; fall back to function name
+		// on Gemini 2.x where id is empty. Name-as-id collapses if the
+		// model issues two calls to the same tool in one turn — that's
+		// a Gemini 2.x limitation we can't fix client-side, but we
+		// stably round-trip whatever the server emitted.
+		id := p.FunctionCall.Id
+		if id == "" {
+			id = p.FunctionCall.Name
+		}
 		idx := a.nextBlockIndex
 		a.nextBlockIndex++
 		events = append(events,
 			llm.EventToolCallStart{
 				BlockIndex: idx,
-				ID:         p.FunctionCall.Name, // Gemini doesn't issue an id; reuse name
+				ID:         id,
 				Name:       p.FunctionCall.Name,
 			},
 			llm.EventToolCallDelta{
@@ -238,12 +249,23 @@ func (a *streamAccumulator) finalize() []llm.StreamEvent {
 		usage.InputTokens = a.lastUsage.PromptTokenCount
 		usage.OutputTokens = a.lastUsage.CandidatesTokenCount + a.lastUsage.ThoughtsTokenCount
 		usage.TotalTokens = a.lastUsage.TotalTokenCount
-		usage.CacheReadTokens = 0 // Gemini exposes cached prompts via cachedContentTokenCount; not surfaced at v0.4.0
+		// Gemini exposes prompt-cache hits via cachedContentTokenCount
+		// on the wire; not surfaced at v0.4.0 — Gemini's caching is
+		// opt-in via the CachedContent API rather than automatic.
+		usage.CacheReadTokens = 0
 		usage.CacheWriteTokens = 0
 	}
 	stop := a.stopReason
 	if !a.gotFinish {
 		stop = llm.StopReasonEnd
+	}
+	// Gemini's finishReason vocabulary has no tool-use terminator
+	// (unlike Anthropic's "tool_use" or OpenAI's "tool_calls"). The
+	// response carries functionCall parts alongside finishReason=STOP.
+	// Synthesize StopReasonToolUse so downstream consumers branch on
+	// it uniformly across providers.
+	if a.gotToolCall {
+		stop = llm.StopReasonToolUse
 	}
 	events = append(events, llm.EventMessageEnd{
 		StopReason: stop,
@@ -253,21 +275,26 @@ func (a *streamAccumulator) finalize() []llm.StreamEvent {
 }
 
 // mapFinishReason translates Gemini's stop reason strings onto
-// pi-llm-go's normalized StopReason. SAFETY / RECITATION etc. are
-// treated as End — the assistant content carries the explanation.
+// pi-llm-go's normalized StopReason.
+//
+// Gemini's actual enum (verified against ai.google.dev/api/generate-content):
+// STOP, MAX_TOKENS, SAFETY, RECITATION, LANGUAGE, OTHER, BLOCKLIST,
+// PROHIBITED_CONTENT, SPII, MALFORMED_FUNCTION_CALL, IMAGE_SAFETY,
+// UNEXPECTED_TOOL_CALL. There is NO tool-use terminator — callers
+// detect tool calls from message content; finalize() synthesizes
+// StopReasonToolUse from the gotToolCall flag.
+//
+// All non-STOP, non-MAX_TOKENS values currently collapse to
+// StopReasonEnd at v0.4.0 — the assistant content carries the
+// explanation. A future PR may add finer-grained values for the
+// content-filter cases (SAFETY / RECITATION / BLOCKLIST / etc.) since
+// those are actionable signal for the caller.
 func mapFinishReason(r string) llm.StopReason {
 	switch r {
 	case "STOP":
 		return llm.StopReasonEnd
 	case "MAX_TOKENS":
 		return llm.StopReasonMaxTokens
-	case "FINISH_REASON_TOOL_CODE", "TOOL_CALL":
-		// Gemini's finish reason vocabulary doesn't include a tool-use
-		// terminator equivalent to Anthropic's stop_reason: "tool_use".
-		// If the response contains functionCall parts, callers can
-		// extract them from the final message regardless of finish
-		// reason. Keep this case open for future enum widening.
-		return llm.StopReasonToolUse
 	default:
 		return llm.StopReasonEnd
 	}
