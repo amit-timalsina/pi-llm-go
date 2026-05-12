@@ -113,6 +113,13 @@ func buildRequestBody(req llm.Request, effort ReasoningEffort, includeReasoningS
 // ImageBlock is allowed only on user-role messages. Assistant- and
 // tool-role ImageBlocks are rejected at this boundary.
 func convertOutgoingMessage(m llm.Message) ([]inputItem, error) {
+	// VideoBlock is not supported by the OpenAI Responses API. Reject
+	// early so callers see the unsupported-feature error immediately.
+	for _, b := range m.Content {
+		if _, ok := b.(llm.VideoBlock); ok {
+			return nil, fmt.Errorf("openai_responses: VideoBlock is not supported; the OpenAI Responses API has no native video input. Extract frames client-side and submit as ImageBlocks")
+		}
+	}
 	if m.Role != llm.RoleUser {
 		for _, b := range m.Content {
 			if _, ok := b.(llm.ImageBlock); ok {

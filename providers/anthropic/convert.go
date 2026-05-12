@@ -326,6 +326,8 @@ func convertOutgoingBlock(b llm.Block) (apiBlock, error) {
 				Data:      v.Data,
 			},
 		}, nil
+	case llm.VideoBlock:
+		return apiBlock{}, fmt.Errorf("anthropic: VideoBlock is not supported; Anthropic Claude has no native video input. Extract frames client-side and submit as ImageBlocks (see ai.google.dev for Gemini's native video support)")
 	default:
 		return apiBlock{}, fmt.Errorf("unsupported block type %T", b)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	llm "github.com/amit-timalsina/pi-llm-go"
@@ -300,6 +301,33 @@ func TestImageBlock_AnthropicImageInHistoryRoundTrip(t *testing.T) {
 	}
 	if firstContent[1].(map[string]any)["type"] != "image" {
 		t.Errorf("first user message: second block should be image; got %+v", firstContent[1])
+	}
+}
+
+// TestVideoBlock_AnthropicRejected pins the contract that Anthropic
+// has no native video input; passing a VideoBlock must produce a clear
+// error rather than silently dropping the data or producing a server
+// error mid-stream.
+func TestVideoBlock_AnthropicRejected(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:     anthropic.ClaudeSonnet4_6,
+		MaxTokens: 64,
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{
+				llm.VideoBlock{URI: "https://www.youtube.com/watch?v=abc"},
+			}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected VideoBlock-not-supported error from Anthropic; got nil")
+	}
+	if !strings.Contains(err.Error(), "VideoBlock") {
+		t.Errorf("error %q should mention VideoBlock", err.Error())
 	}
 }
 

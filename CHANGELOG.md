@@ -6,6 +6,53 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- New `providers/gemini` package — first-party Google Gemini support
+  (Gemini 2.5 family + Gemini 3 family + Gemini Robotics ER 1.6). Same
+  `llm.LLM` interface as the existing providers; SSE streaming via
+  `:streamGenerateContent?alt=sse`. Constants for canonical model IDs.
+  Auth via `x-goog-api-key` header (Google AI direct; Vertex AI is a
+  future addition).
+- `llm.VideoBlock` — sealed `Block` extension for multimodal video
+  input. Today only the Gemini provider accepts it natively; Anthropic
+  and OpenAI providers reject `VideoBlock` at the wire boundary with a
+  clear error pointing to the frame-extraction workaround. Two
+  emission shapes:
+  - **Inline base64** via `Data` + `MimeType` for files under ~20 MB.
+  - **URI reference** via `URI` for YouTube URLs (free-tier 8h/day cap)
+    or pre-uploaded Files API handles.
+  - Optional `StartOffset` / `EndOffset` / `FPS` for clipping + frame-
+    rate override (Gemini defaults to 1 FPS).
+  - `Validate()` enforces "exactly one of Data or URI", rejects a
+    leading `"data:"` URI prefix, and requires `MimeType` when `Data`
+    is set.
+- Gemini provider features:
+  - Text + image (ImageBlock) + video (VideoBlock) input.
+  - Tool calling via function declarations; the loop folds RoleTool
+    messages into the prior user turn as `functionResponse` parts
+    since Gemini has no separate tool role.
+  - Extended thinking via `generationConfig.thinkingConfig` (translated
+    from `Request.Thinking`). `thoughtsTokenCount` rolls into
+    `Usage.OutputTokens` so cost accounting stays accurate.
+  - `systemInstruction` for system prompts (Gemini's dedicated
+    top-level field, not a role-system content).
+- `examples/multimodal_gemini` — text / image / video / video-URI
+  demos against any Gemini model via flags. Live-API verified against
+  Gemini 2.5 Flash (text + image) and Gemini 3 Flash Preview (10-min
+  YouTube video → 54k input tokens, correct content identification).
+
+### Deferred
+
+- **Files API helper** (`providers/gemini/files.Upload/.Wait/.Delete`)
+  is planned for v0.5.0. Callers who need to upload >20 MB videos today
+  can use Google's official `google.golang.org/genai` SDK to upload,
+  then pass the resulting `https://generativelanguage.googleapis.com/v1beta/files/...`
+  URI to `VideoBlock.URI` — pi-llm-go is URI-agnostic, no special
+  handling required.
+- **Vertex AI backend** — different endpoint scheme + OAuth instead of
+  API key. Future Backend option on `gemini.Options`.
+
 ## [0.3.0] - 2026-05-11
 
 Multimodal image input across all three providers. WWMD-aligned with

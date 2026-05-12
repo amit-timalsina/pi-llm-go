@@ -250,6 +250,31 @@ func TestImageBlock_OpenAIRejectsNonUserRoles(t *testing.T) {
 	}
 }
 
+// TestVideoBlock_OpenAIRejected pins the contract that OpenAI Chat
+// Completions has no native video input — VideoBlock must error
+// loudly instead of silently dropping.
+func TestVideoBlock_OpenAIRejected(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p, _ := openai.New(openai.Options{APIKey: "test", BaseURL: srv.URL})
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model: openai.GPT5_5,
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{
+				llm.VideoBlock{URI: "https://www.youtube.com/watch?v=abc"},
+			}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected VideoBlock-not-supported error from OpenAI; got nil")
+	}
+	if !strings.Contains(err.Error(), "VideoBlock") {
+		t.Errorf("error %q should mention VideoBlock", err.Error())
+	}
+}
+
 // TestImageBlock_OpenAIImageOnlyNoPlaceholder verifies the asymmetry
 // vs Anthropic: OpenAI Chat Completions accepts image-only user
 // messages, so no synthetic placeholder text is injected. The wire

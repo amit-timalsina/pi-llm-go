@@ -7,37 +7,37 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v0.4.0** landing — Gemini provider + `llm.VideoBlock` for native
+  multimodal video input (Gemini-exclusive; Anthropic and OpenAI
+  providers reject at the wire boundary). Tag stamped on merge.
+- **v0.3.0** shipped 2026-05-11 — `ImageBlock` multimodal image input
+  across the three pre-Gemini providers.
 - **v0.2.0** shipped 2026-05-11 — CacheRetention knob (WWMD convergence).
 - **v1.0 ETA:** unknown. v1.0 requires ≥4 weeks production use without
   API churn + ≥1 external Go reviewer of the public surface.
 
 ## Near-term (next 1–3 minor releases)
 
-### v0.3.0 — multimodal input
+### v0.5.0 — Gemini Files API helper
 
-- **Image blocks** as a new sealed-sum extension (`Source` = `base64` or
-  `url`, `MimeType`, `Data`). Anthropic + OpenAI both accept base64 +
-  remote URLs; providers convert at the wire boundary.
-- Highest-frequency user ask; ours has zero today.
-- `examples/multimodal_input` against both providers.
+- New `providers/gemini/files` sub-package: `Upload(ctx, reader, mime)
+  → FileRef`, `Wait(ctx, ref) error`, `Delete(ctx, ref) error`. Multipart
+  upload first; resumable protocol for very large files later.
+- Unblocks the >20 MB video path that v0.4.0 punts to Google's official
+  `genai-go` SDK. After this lands,
+  `examples/multimodal_gemini --video <large-file.mp4>` becomes
+  one-command.
 
-### v0.4.0 — Gemini provider
+### v0.6.0 — token counting + cost helpers
 
-- New `providers/gemini` package against the Gemini API directly (not
-  via OpenAI-compat, which loses thinking + caching ergonomics). Closes
-  the big-three provider gap. Mario also has direct Gemini support.
-- Same `LLM` interface; provider-specific options in its own struct.
-
-### v0.5.0 — token counting + cost helpers
-
-- `Provider.CountTokens(ctx, Request) (int, error)` — Anthropic and
-  OpenAI both expose this without spending an inference call. Useful
-  for cost guardrails before the request flies.
+- `Provider.CountTokens(ctx, Request) (int, error)` — Anthropic, OpenAI,
+  and Gemini all expose this without spending an inference call.
+  Useful for cost guardrails before the request flies.
 - Optional `Cost(usage Usage, model string) (input, output, total float64)`
   per provider with a maintained pricing table. Mario does not ship
   this; Go consumers keep reinventing it; ours can.
 
-### v0.6.0 — retry middleware + finer-grained errors
+### v0.7.0 — retry middleware + finer-grained errors
 
 - Provider-side retry on rate limits + 5xx (configurable base/max
   delay; default off; opt-in via `Options.Retry`). Keeps the no-magic

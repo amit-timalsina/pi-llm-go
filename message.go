@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 )
 
 // Role enumerates message roles in a transcript. RoleTool messages carry
@@ -117,11 +118,87 @@ type ImageBlock struct {
 	MimeType string
 }
 
+// VideoBlock holds video data for multimodal input. Today only the
+// built-in Gemini provider accepts video natively; Anthropic and OpenAI
+// providers reject VideoBlock at the wire boundary (callers wanting
+// video understanding on those providers must extract frames client-side
+// and submit them as ImageBlocks).
+//
+// VideoBlock has three mutually-exclusive emission shapes:
+//
+//   - **Data + MimeType set**: inline base64. Total request body must
+//     stay under the provider's inline cap (Gemini: ~20 MB).
+//   - **URI set**: a pre-uploaded reference. For Gemini, this is either
+//     an `https://generativelanguage.googleapis.com/v1beta/files/...`
+//     handle from the Files API (see providers/gemini/files) or a
+//     YouTube URL (public videos only; free-tier 8h/day cap).
+//   - Exactly one of (Data, URI) must be non-empty; both empty or both
+//     set is a contract violation rejected by Validate().
+//
+// Optional StartOffset, EndOffset, and FPS let callers clip the
+// segment and override Gemini's default 1 FPS sampling. nil = use the
+// provider's default. FPS is float for fractional rates (e.g. 0.5).
+//
+// MimeType uses standard video MIME identifiers: video/mp4,
+// video/quicktime, video/webm, video/mpeg, etc. Required when Data is
+// set; ignored when only URI is set (server infers from the file).
+type VideoBlock struct {
+	// Data is the raw base64-encoded video bytes for inline emission.
+	// Do NOT include the "data:" URI prefix. Mutually exclusive with URI.
+	Data string
+
+	// URI is a pre-uploaded reference (Files API handle, YouTube URL,
+	// or provider-specific URI). Mutually exclusive with Data.
+	URI string
+
+	// MimeType is the video's MIME type (e.g. "video/mp4"). Required
+	// when Data is set; optional when only URI is set.
+	MimeType string
+
+	// StartOffset, when non-nil, clips the start of the segment. The
+	// provider must support clipping; Gemini does via videoMetadata.
+	StartOffset *time.Duration
+
+	// EndOffset, when non-nil, clips the end of the segment.
+	EndOffset *time.Duration
+
+	// FPS, when non-nil, overrides the provider's default sampling rate.
+	// Gemini defaults to 1 FPS (1 video frame per second analyzed);
+	// pass a higher value for action-dense content or lower for long
+	// static footage. Float for fractional rates (0.5 = 1 frame per 2s).
+	FPS *float64
+}
+
 func (TextBlock) isBlock()       {}
 func (ThinkingBlock) isBlock()   {}
 func (ToolCallBlock) isBlock()   {}
 func (ToolResultBlock) isBlock() {}
 func (ImageBlock) isBlock()      {}
+func (VideoBlock) isBlock()      {}
+
+// Validate enforces the VideoBlock contract:
+//   - exactly one of (Data, URI) must be non-empty
+//   - Data must not carry a "data:" URI prefix (raw base64 only)
+//   - MimeType is required when Data is set
+func (v VideoBlock) Validate() error {
+	hasData := v.Data != ""
+	hasURI := v.URI != ""
+	if !hasData && !hasURI {
+		return errors.New("VideoBlock: exactly one of Data or URI must be set")
+	}
+	if hasData && hasURI {
+		return errors.New("VideoBlock: Data and URI are mutually exclusive")
+	}
+	if hasData {
+		if strings.HasPrefix(v.Data, "data:") {
+			return errors.New("VideoBlock: Data must be raw base64; remove the leading \"data:\" URI prefix")
+		}
+		if v.MimeType == "" {
+			return errors.New("VideoBlock: MimeType is required when Data is set")
+		}
+	}
+	return nil
+}
 
 // Validate enforces the ImageBlock contract: Data must be raw
 // base64-encoded bytes (without the "data:<mime>;base64," URI prefix)
