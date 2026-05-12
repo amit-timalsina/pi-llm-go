@@ -154,6 +154,15 @@ func buildRequestBody(req llm.Request) (io.Reader, error) {
 // assistant / tool roles is friendlier than silently emitting an empty
 // content array on the wire.
 func convertOutgoingMessage(m llm.Message) ([]apiMessage, error) {
+	// VideoBlock is not supported by the OpenAI Chat Completions API.
+	// Reject early on every role so callers see the unsupported-feature
+	// error immediately instead of having their video silently dropped
+	// by the text-only fast path or buried in a downstream API error.
+	for _, b := range m.Content {
+		if _, ok := b.(llm.VideoBlock); ok {
+			return nil, fmt.Errorf("openai: VideoBlock is not supported; the OpenAI Chat Completions API has no native video input. Extract frames client-side and submit as ImageBlocks")
+		}
+	}
 	if m.Role != llm.RoleUser {
 		for _, b := range m.Content {
 			if _, ok := b.(llm.ImageBlock); ok {

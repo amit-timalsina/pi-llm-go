@@ -13,6 +13,7 @@
 /azure_openai
 /prompt_caching
 /multimodal
+/multimodal_gemini
 
 # Coverage / profiling output.
 /coverage.out

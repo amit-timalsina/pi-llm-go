@@ -147,6 +147,30 @@ func TestImageBlock_ResponsesRejectsEmptyData(t *testing.T) {
 	}
 }
 
+// TestVideoBlock_ResponsesRejected pins the contract that the OpenAI
+// Responses API has no native video input — VideoBlock must error.
+func TestVideoBlock_ResponsesRejected(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model: "gpt-5.5",
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{
+				llm.VideoBlock{URI: "https://www.youtube.com/watch?v=abc"},
+			}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected VideoBlock-not-supported error from Responses API; got nil")
+	}
+	if !strings.Contains(err.Error(), "VideoBlock") {
+		t.Errorf("error %q should mention VideoBlock", err.Error())
+	}
+}
+
 // TestImageBlock_ResponsesRejectsNonUserRoles verifies the role guard
 // on the Responses API: ImageBlock outside user role errors.
 func TestImageBlock_ResponsesRejectsNonUserRoles(t *testing.T) {
