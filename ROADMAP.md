@@ -7,10 +7,11 @@ Reordering happens when reality changes.
 
 ## Status
 
-- **v0.5.0** landing — Gemini Files API helper
+- **v0.5.0** shipped 2026-05-12 — Gemini Files API helper
   (`providers/gemini/files`): Upload / Wait / Get / Delete with
-  multipart upload, ACTIVE-state polling, and ~2 GB file ceiling.
-  Closes the >20 MB video gap left by v0.4.0. Tag stamped on merge.
+  multipart upload, ACTIVE-state polling (short-circuits on
+  already-ACTIVE refs), and ~2 GB file ceiling. Closes the >20 MB
+  video gap left by v0.4.0.
 - **v0.4.0** shipped 2026-05-12 — Gemini provider + `llm.VideoBlock` for
   native multimodal video input (Gemini-exclusive; Anthropic and OpenAI
   providers reject at the wire boundary).
