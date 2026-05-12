@@ -106,12 +106,45 @@ p, _ := openai.New(openai.Options{
 
 Talks the Chat Completions wire format, so the same provider works against any compatible host. `Request.Thinking` is ignored at v1 — reasoning-effort dialects vary too much across compatible hosts to map portably.
 
+### Gemini
+
+```go
+import "github.com/amit-timalsina/pi-llm-go/providers/gemini"
+
+p, _ := gemini.New(gemini.Options{APIKey: os.Getenv("GEMINI_API_KEY")})
+```
+
+Native support for the Gemini 2.5 / 3 / Robotics ER 1.6 families. Same `LLM` interface as the other providers, plus **`llm.VideoBlock` for native video input** (Gemini is the only provider that accepts video natively; Anthropic and OpenAI reject `VideoBlock` at the wire boundary with a clear pointer to the frame-extraction workaround). YouTube URLs work directly:
+
+```go
+llm.VideoBlock{URI: "https://www.youtube.com/watch?v=..."}
+```
+
+For files larger than ~20 MB, the sibling `providers/gemini/files` sub-package handles the multipart upload + ACTIVE-state polling:
+
+```go
+import "github.com/amit-timalsina/pi-llm-go/providers/gemini/files"
+
+fc, _ := files.New(files.Options{APIKey: os.Getenv("GEMINI_API_KEY")})
+ref, _ := fc.Upload(ctx, mp4Reader, "video/mp4", files.UploadOptions{DisplayName: "demo.mp4"})
+ref, _ = fc.Wait(ctx, ref, files.WaitOptions{}) // polls until ACTIVE
+defer fc.Delete(context.Background(), ref.Name) // ~48h server-side TTL if you forget
+
+// Now use the URI in a generateContent call:
+content := []llm.Block{llm.TextBlock{Text: "describe"}, llm.VideoBlock{URI: ref.URI}}
+```
+
+Vertex AI (gs:// URIs + OAuth) is a planned future addition; v0.5 only supports the Google AI direct endpoint.
+
 ## Examples
 
 Runnable examples in `examples/`:
 
 - `examples/streaming` — basic streaming of a text response.
 - `examples/tool_calling` — hand-rolled tool-call loop against `get_current_time`.
+- `examples/multimodal` — image input on Anthropic + OpenAI.
+- `examples/multimodal_gemini` — text / image / video against Gemini; `--video-upload PATH` exercises the Files API end-to-end.
+- `examples/prompt_caching` — `CacheRetention` knob driving Anthropic prompt-cache hits.
 
 Run them with `go run ./examples/streaming` (set `ANTHROPIC_API_KEY` first).
 
