@@ -7,9 +7,9 @@ Reordering happens when reality changes.
 
 ## Status
 
-- **v0.4.0** landing — Gemini provider + `llm.VideoBlock` for native
-  multimodal video input (Gemini-exclusive; Anthropic and OpenAI
-  providers reject at the wire boundary). Tag stamped on merge.
+- **v0.4.0** shipped 2026-05-12 — Gemini provider + `llm.VideoBlock` for
+  native multimodal video input (Gemini-exclusive; Anthropic and OpenAI
+  providers reject at the wire boundary).
 - **v0.3.0** shipped 2026-05-11 — `ImageBlock` multimodal image input
   across the three pre-Gemini providers.
 - **v0.2.0** shipped 2026-05-11 — CacheRetention knob (WWMD convergence).
