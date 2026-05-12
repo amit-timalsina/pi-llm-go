@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	llm "github.com/amit-timalsina/pi-llm-go"
 	"github.com/amit-timalsina/pi-llm-go/providers/gemini/files"
 )
 
@@ -241,8 +242,8 @@ func TestUpload_HTTPErrorSurfacesBody(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected HTTP-error from Upload")
 	}
-	if !strings.Contains(err.Error(), "HTTP 400") {
-		t.Errorf("error %q should mention HTTP 400", err.Error())
+	if !strings.Contains(err.Error(), "status=400") {
+		t.Errorf("error %q should mention status=400", err.Error())
 	}
 	if !strings.Contains(err.Error(), "invalid mime") {
 		t.Errorf("error %q should include response body", err.Error())
@@ -309,8 +310,8 @@ func TestDelete_HTTPErrorSurfacesBody(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected HTTP-error from Delete")
 	}
-	if !strings.Contains(err.Error(), "HTTP 404") {
-		t.Errorf("error %q should mention HTTP 404", err.Error())
+	if !strings.Contains(err.Error(), "status=404") {
+		t.Errorf("error %q should mention status=404", err.Error())
 	}
 }
 
@@ -406,11 +407,120 @@ func TestWait_RequiresRefName(t *testing.T) {
 	srv := httptest.NewServer(newFakeAPI(t).handler())
 	defer srv.Close()
 	c := newClient(t, srv)
-	if _, err := c.Wait(context.Background(), &files.FileRef{}); err == nil {
+	if _, err := c.Wait(context.Background(), &files.FileRef{}, files.WaitOptions{}); err == nil {
 		t.Error("expected error when ref.Name is empty")
 	}
-	if _, err := c.Wait(context.Background(), nil); err == nil {
+	if _, err := c.Wait(context.Background(), nil, files.WaitOptions{}); err == nil {
 		t.Error("expected error when ref is nil")
+	}
+}
+
+// TestWait_ShortCircuitsOnActiveRef pins the no-wasted-Get contract:
+// calling Wait on a ref already in StateActive must return without
+// hitting the server.
+func TestWait_ShortCircuitsOnActiveRef(t *testing.T) {
+	fs := newFakeAPI(t)
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	c := newClient(t, srv)
+
+	ref := &files.FileRef{Name: "files/already-active", State: files.StateActive}
+	got, err := c.Wait(context.Background(), ref, files.WaitOptions{})
+	if err != nil {
+		t.Fatalf("Wait on ACTIVE ref: %v", err)
+	}
+	if got != ref {
+		t.Errorf("Wait should return the same ref pointer; short-circuit means no fresh fetch")
+	}
+	if len(fs.getCalledFor) != 0 {
+		t.Errorf("Wait on ACTIVE ref burned %d Get round-trip(s); want 0", len(fs.getCalledFor))
+	}
+}
+
+// TestUpload_EmptyBodyRejectedAtBoundary verifies Upload itself
+// doesn't enforce non-empty body locally — the server is the
+// authority on what's an acceptable payload, and rejection comes
+// through as a *llm.APIError carrying the response body. The test
+// fixture returns a 400 to simulate Gemini's actual behavior for
+// zero-byte uploads.
+func TestUpload_EmptyBodyRejectedAtBoundary(t *testing.T) {
+	fs := newFakeAPI(t)
+	fs.uploadRespFn = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"message":"empty body"}}`)
+	}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	c := newClient(t, srv)
+
+	_, err := c.Upload(context.Background(), bytes.NewReader(nil), "text/plain", files.UploadOptions{})
+	if err == nil {
+		t.Fatal("expected error on empty-body upload (server-side rejection)")
+	}
+	if !strings.Contains(err.Error(), "empty body") {
+		t.Errorf("error %q should include server-side rejection body", err.Error())
+	}
+}
+
+// TestUpload_ContextCancellationMidFlight verifies that cancelling
+// ctx during an in-flight Upload unwinds promptly, not after the
+// server's full response timeline. Uses a slow server (2s sleep) and
+// a tight ctx (50ms) to assert the client returns within ~500ms of
+// cancel rather than waiting for the server to finish.
+func TestUpload_ContextCancellationMidFlight(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Slow server: hold the response for 2s. If the client doesn't
+		// honor ctx cancellation, Upload would block here.
+		time.Sleep(2 * time.Second)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, defaultUploadResponse)
+	}))
+	defer srv.Close()
+	c := newClient(t, srv)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	_, err := c.Upload(ctx, bytes.NewReader([]byte("payload")), "text/plain", files.UploadOptions{})
+	elapsed := time.Since(started)
+
+	if err == nil {
+		t.Fatal("expected ctx-cancel error on Upload; got nil")
+	}
+	if elapsed > 1*time.Second {
+		t.Errorf("Upload took %v to honor ctx cancel; want < 1s (cancel should unblock the http.Client without waiting for server)", elapsed)
+	}
+}
+
+// TestUpload_HTTPErrorIsAPIError verifies error wrapping: callers can
+// errors.As to *llm.APIError and branch on Status / Inner sentinels.
+func TestUpload_HTTPErrorIsAPIError(t *testing.T) {
+	fs := newFakeAPI(t)
+	fs.uploadRespFn = func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":{"message":"bad api key"}}`)
+	}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	c := newClient(t, srv)
+
+	_, err := c.Upload(context.Background(), bytes.NewReader([]byte("x")), "text/plain", files.UploadOptions{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var apiErr *llm.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error %T does not unwrap to *llm.APIError", err)
+	}
+	if apiErr.Status != http.StatusUnauthorized {
+		t.Errorf("APIError.Status=%d, want 401", apiErr.Status)
+	}
+	if apiErr.Provider != "gemini-files" {
+		t.Errorf("APIError.Provider=%q, want gemini-files", apiErr.Provider)
+	}
+	if !errors.Is(err, llm.ErrAuth) {
+		t.Errorf("error should wrap llm.ErrAuth for 401; got %v", err)
 	}
 }
 

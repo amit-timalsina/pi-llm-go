@@ -43,6 +43,8 @@ import (
 	"net/textproto"
 	"strconv"
 	"time"
+
+	llm "github.com/amit-timalsina/pi-llm-go"
 )
 
 // DefaultBaseURL is the standard Google AI endpoint. Override via
@@ -96,13 +98,16 @@ func New(opts Options) (*Client, error) {
 // State is the Gemini file lifecycle. New uploads start as Processing,
 // transition to Active once the server has indexed the content (videos
 // take seconds to minutes; small files are often Active immediately),
-// or Failed if the upload was malformed.
+// or Failed if the upload was malformed. STATE_UNSPECIFIED is the
+// protobuf default; the server should never emit it but we model the
+// constant for completeness.
 type State string
 
 const (
-	StateProcessing State = "PROCESSING"
-	StateActive     State = "ACTIVE"
-	StateFailed     State = "FAILED"
+	StateUnspecified State = "STATE_UNSPECIFIED"
+	StateProcessing  State = "PROCESSING"
+	StateActive      State = "ACTIVE"
+	StateFailed      State = "FAILED"
 )
 
 // FileRef is the typed view of a Gemini file. The URI field is what
@@ -205,9 +210,8 @@ func (c *Client) Upload(ctx context.Context, r io.Reader, mimeType string, opts 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("files.Upload: HTTP %d: %s", resp.StatusCode, string(respBody))
+	if err := apiError(resp, "files.Upload"); err != nil {
+		return nil, err
 	}
 
 	var wrap struct {
@@ -219,7 +223,9 @@ func (c *Client) Upload(ctx context.Context, r io.Reader, mimeType string, opts 
 	return wrap.File.toRef(), nil
 }
 
-// WaitOptions tunes Wait. All fields optional.
+// WaitOptions tunes Wait. All fields optional. Pass WaitOptions{} for
+// defaults (2s poll interval, suitable for small images; videos may
+// want longer to avoid hammering the server).
 type WaitOptions struct {
 	// PollInterval is the wait between state polls. Defaults to 2s.
 	// Set lower for short-lived uploads in tests; never below 200ms
@@ -233,20 +239,38 @@ const defaultWaitPollInterval = 2 * time.Second
 // or ctx is cancelled. Returns the latest FileRef the server reported.
 // Wait does NOT mutate the input ref.
 //
+// Short-circuits if ref.State is already Active — no wasted Get
+// call. Pass a stale ref (e.g. one fetched minutes ago whose state
+// might have changed) only if you specifically want a fresh poll.
+//
 // Use ctx with a deadline to bound the wait; videos may take minutes
 // to process. A short ctx timeout is preferable to a small MaxAttempts
 // option — the deadline is observable from outside, the attempt count
 // isn't.
 //
-// On Failed state, returns (ref, error) where ref has State=Failed.
-func (c *Client) Wait(ctx context.Context, ref *FileRef, opts ...WaitOptions) (*FileRef, error) {
+// On Failed state, returns (ref, error) where ref has State=Failed so
+// callers can inspect the failed ref and the error in one branch.
+func (c *Client) Wait(ctx context.Context, ref *FileRef, opts WaitOptions) (*FileRef, error) {
 	if ref == nil || ref.Name == "" {
 		return nil, errors.New("files.Wait: ref.Name is required")
 	}
-	interval := defaultWaitPollInterval
-	if len(opts) > 0 && opts[0].PollInterval > 0 {
-		interval = opts[0].PollInterval
+	// Short-circuit: if the caller already has an ACTIVE ref (e.g.
+	// Upload returned ACTIVE immediately, common for small files),
+	// don't burn a Get round-trip.
+	if ref.State == StateActive {
+		return ref, nil
 	}
+
+	interval := defaultWaitPollInterval
+	if opts.PollInterval > 0 {
+		interval = opts.PollInterval
+	}
+
+	// Ticker (not time.After) so we don't leak timers on each
+	// iteration under load — every time.After leaves a GC-rooted
+	// timer that survives until fire.
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
 	for {
 		current, err := c.Get(ctx, ref.Name)
@@ -258,9 +282,10 @@ func (c *Client) Wait(ctx context.Context, ref *FileRef, opts ...WaitOptions) (*
 			return current, nil
 		case StateFailed:
 			return current, fmt.Errorf("files.Wait: file %s failed processing", current.Name)
-		case StateProcessing, "":
-			// Keep polling. Empty state defends against a weird
-			// server response — treat unknown as "keep trying."
+		case StateProcessing, StateUnspecified, "":
+			// Keep polling. STATE_UNSPECIFIED and empty defend
+			// against a weird server response — treat unknown as
+			// "keep trying."
 		default:
 			return current, fmt.Errorf("files.Wait: unexpected state %q on %s", current.State, current.Name)
 		}
@@ -268,7 +293,7 @@ func (c *Client) Wait(ctx context.Context, ref *FileRef, opts ...WaitOptions) (*
 		select {
 		case <-ctx.Done():
 			return current, fmt.Errorf("files.Wait: %w (last state: %s)", ctx.Err(), current.State)
-		case <-time.After(interval):
+		case <-ticker.C:
 		}
 	}
 }
@@ -290,9 +315,8 @@ func (c *Client) Get(ctx context.Context, name string) (*FileRef, error) {
 		return nil, fmt.Errorf("files.Get: do request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("files.Get: HTTP %d: %s", resp.StatusCode, string(respBody))
+	if err := apiError(resp, "files.Get"); err != nil {
+		return nil, err
 	}
 	var f apiFile
 	if err := json.NewDecoder(resp.Body).Decode(&f); err != nil {
@@ -322,11 +346,28 @@ func (c *Client) Delete(ctx context.Context, name string) error {
 		return fmt.Errorf("files.Delete: do request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("files.Delete: HTTP %d: %s", resp.StatusCode, string(respBody))
+	if err := apiError(resp, "files.Delete"); err != nil {
+		return err
 	}
 	return nil
+}
+
+// apiError converts a non-2xx HTTP response into a *llm.APIError so
+// callers can branch with errors.Is on the sentinel set
+// (ErrAuth / ErrRateLimit / ErrInvalidRequest / ErrProvider).
+// Returns nil for 2xx. The op string is prepended to APIError.Body so
+// the call site is visible even when only the message is rendered.
+func apiError(resp *http.Response, op string) error {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(resp.Body)
+	return &llm.APIError{
+		Provider: "gemini-files",
+		Status:   resp.StatusCode,
+		Body:     []byte(op + ": " + string(body)),
+		Inner:    llm.SentinelForStatus(resp.StatusCode),
+	}
 }
 
 // --- internal wire-format helpers ---

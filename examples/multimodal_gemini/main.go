@@ -116,7 +116,7 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "[files] uploaded as %s (state=%s); waiting until ACTIVE...\n", ref.Name, ref.State)
-		ref, err = fc.Wait(ctx, ref)
+		ref, err = fc.Wait(ctx, ref, files.WaitOptions{})
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "files.Wait:", err)
 			os.Exit(1)
