@@ -6,6 +6,35 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- New `providers/gemini/files` sub-package — minimal Gemini Files API
+  client. Closes the >20 MB video gap left by v0.4.0; callers no
+  longer need Google's `genai-go` SDK alongside pi-llm-go to upload.
+- `files.New(Options) (*Client, error)` — same Options shape as
+  `gemini.New` (APIKey + BaseURL + HTTPClient).
+- `Client.Upload(ctx, r, mimeType, UploadOptions) (*FileRef, error)`
+  — multipart upload, supports files up to ~2 GB. Returns a
+  `FileRef` with the URI to plug into `VideoBlock.URI`.
+- `Client.Wait(ctx, ref, WaitOptions...) (*FileRef, error)` —
+  polls `Get` until state reaches `ACTIVE` or `FAILED`. Default
+  poll interval 2s; configurable via `WaitOptions.PollInterval`.
+  Honors `ctx` cancellation promptly.
+- `Client.Get(ctx, name) (*FileRef, error)` and `Client.Delete(ctx, name) error`
+  for state inspection + cleanup.
+- `FileRef` exposes `Name`, `URI`, `MimeType`, `SizeBytes`, `State`,
+  `CreateTime`, `ExpirationTime` (typically ~48h), `SHA256Hash`,
+  `Source`.
+- `examples/multimodal_gemini` extended with `--video-upload PATH`
+  flag that exercises the full upload → wait → use → delete loop.
+- Live-API verified end-to-end (Upload → Wait → Get → Delete).
+
+### Deferred
+
+- **Resumable upload protocol** for files >2 GB. The current
+  multipart path handles the typical case; resumable adds a
+  separate two-step `X-Goog-Upload-Protocol: resumable` flow.
+
 ## [0.4.0] - 2026-05-12
 
 First-party Google Gemini support + native multimodal video input via

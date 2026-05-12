@@ -7,6 +7,10 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v0.5.0** landing — Gemini Files API helper
+  (`providers/gemini/files`): Upload / Wait / Get / Delete with
+  multipart upload, ACTIVE-state polling, and ~2 GB file ceiling.
+  Closes the >20 MB video gap left by v0.4.0. Tag stamped on merge.
 - **v0.4.0** shipped 2026-05-12 — Gemini provider + `llm.VideoBlock` for
   native multimodal video input (Gemini-exclusive; Anthropic and OpenAI
   providers reject at the wire boundary).
@@ -17,16 +21,6 @@ Reordering happens when reality changes.
   API churn + ≥1 external Go reviewer of the public surface.
 
 ## Near-term (next 1–3 minor releases)
-
-### v0.5.0 — Gemini Files API helper
-
-- New `providers/gemini/files` sub-package: `Upload(ctx, reader, mime)
-  → FileRef`, `Wait(ctx, ref) error`, `Delete(ctx, ref) error`. Multipart
-  upload first; resumable protocol for very large files later.
-- Unblocks the >20 MB video path that v0.4.0 punts to Google's official
-  `genai-go` SDK. After this lands,
-  `examples/multimodal_gemini --video <large-file.mp4>` becomes
-  one-command.
 
 ### v0.6.0 — token counting + cost helpers
 
