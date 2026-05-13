@@ -174,6 +174,42 @@ func TestCountTokens_HTTPErrorWrapsSentinel(t *testing.T) {
 
 // TestCountTokens_AsTokenCounterInterface ensures the provider satisfies
 // llm.TokenCounter — the documented integration point for callers.
+// TestCountTokens_AdaptiveThinkingShape mirrors thinking_test.go's
+// Stream-side adaptive-shape assertion but on the /v1/messages/count_tokens
+// endpoint. Both call paths route through applyThinkingConfig, so if
+// Stream is correct, CountTokens is too — but explicit coverage
+// prevents future drift (the duplicated dispatch was flagged by a
+// cold-context reviewer; we extracted the helper AND added this test
+// belt-and-braces).
+func TestCountTokens_AdaptiveThinkingShape(t *testing.T) {
+	t.Parallel()
+
+	srv := &fakeCountServer{inputTokens: 42}
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+	p := newProvider(t, ts)
+
+	_, err := p.CountTokens(context.Background(), llm.Request{
+		Model:    anthropic.ClaudeOpus4_7,
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+		Thinking: &llm.ThinkingConfig{Effort: llm.EffortMedium},
+	})
+	if err != nil {
+		t.Fatalf("CountTokens: %v", err)
+	}
+
+	body := string(srv.lastBody)
+	if !strings.Contains(body, `"type":"adaptive"`) {
+		t.Errorf("count_tokens body missing adaptive thinking type: %s", body)
+	}
+	if !strings.Contains(body, `"output_config":{"effort":"medium"}`) {
+		t.Errorf("count_tokens body missing output_config.effort=medium: %s", body)
+	}
+	if strings.Contains(body, "budget_tokens") {
+		t.Errorf("count_tokens body should NOT contain budget_tokens in adaptive shape: %s", body)
+	}
+}
+
 func TestCountTokens_AsTokenCounterInterface(t *testing.T) {
 	t.Parallel()
 

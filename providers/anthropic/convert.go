@@ -116,6 +116,38 @@ type apiThinkingConfig struct {
 	BudgetTokens int    `json:"budget_tokens,omitempty"`
 }
 
+// applyThinkingConfig returns the on-wire thinking / output_config
+// pair for a caller-supplied llm.ThinkingConfig. Both returned
+// pointers may be nil (no thinking requested), or only the first
+// (manual mode), or both (adaptive mode).
+//
+// Single source of truth for the dispatch — both Stream's
+// buildRequestBody and CountTokens's doCountTokens delegate to this
+// so they can't silently diverge.
+//
+// Dispatch:
+//   - t == nil OR both fields zero            → (nil, nil): no thinking
+//   - t.Effort != ""                          → adaptive shape; Effort wins
+//     even if t.BudgetTokens > 0 (lets callers pre-set both during
+//     a migration)
+//   - t.BudgetTokens > 0 (Effort empty)       → manual shape
+func applyThinkingConfig(t *llm.ThinkingConfig) (*apiThinkingConfig, *apiOutputConfig) {
+	if t == nil {
+		return nil, nil
+	}
+	switch {
+	case t.Effort != "":
+		return &apiThinkingConfig{Type: "adaptive"},
+			&apiOutputConfig{Effort: string(t.Effort)}
+	case t.BudgetTokens > 0:
+		return &apiThinkingConfig{
+			Type:         "enabled",
+			BudgetTokens: t.BudgetTokens,
+		}, nil
+	}
+	return nil, nil
+}
+
 // apiOutputConfig is the top-level `output_config` request field that
 // carries the adaptive-thinking effort enum. Separate from the
 // `thinking` block per Anthropic's wire contract — `effort` lives at
@@ -164,23 +196,7 @@ func buildRequestBody(req llm.Request) (io.Reader, []string, error) {
 		body.System = req.System
 	}
 
-	// Thinking dispatch — Anthropic has two on-wire shapes (issue #20).
-	// When both Effort and BudgetTokens are set, Effort wins: adaptive
-	// is the future, manual is deprecated. When only BudgetTokens is
-	// set, emit the legacy manual shape for backward compat. When
-	// neither is set, omit the field entirely (no thinking).
-	if req.Thinking != nil {
-		switch {
-		case req.Thinking.Effort != "":
-			body.Thinking = &apiThinkingConfig{Type: "adaptive"}
-			body.OutputConfig = &apiOutputConfig{Effort: string(req.Thinking.Effort)}
-		case req.Thinking.BudgetTokens > 0:
-			body.Thinking = &apiThinkingConfig{
-				Type:         "enabled",
-				BudgetTokens: req.Thinking.BudgetTokens,
-			}
-		}
-	}
+	body.Thinking, body.OutputConfig = applyThinkingConfig(req.Thinking)
 
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, apiTool{

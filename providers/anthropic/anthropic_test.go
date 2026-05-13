@@ -211,8 +211,12 @@ func TestStreamRequestBodyShape(t *testing.T) {
 	p := newProvider(t, srv)
 
 	temp := 0.5
+	// Sonnet 4.6 still accepts the manual thinking shape; Opus 4.7
+	// would 400 on this combination (see thinking_test.go for the
+	// per-shape coverage). This test only verifies wire-body field
+	// serialization, not live model acceptance.
 	_, err := llm.Complete(context.Background(), p, llm.Request{
-		Model:       anthropic.ClaudeOpus4_7,
+		Model:       anthropic.ClaudeSonnet4_6,
 		System:      "you are terse",
 		Messages:    []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
 		Temperature: &temp,
@@ -227,7 +231,7 @@ func TestStreamRequestBodyShape(t *testing.T) {
 	if err := json.Unmarshal(fs.lastBody, &body); err != nil {
 		t.Fatalf("decode last body: %v", err)
 	}
-	if body["model"] != anthropic.ClaudeOpus4_7 {
+	if body["model"] != anthropic.ClaudeSonnet4_6 {
 		t.Errorf("model=%v", body["model"])
 	}
 	if body["system"] != "you are terse" {

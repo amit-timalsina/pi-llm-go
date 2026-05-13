@@ -56,19 +56,7 @@ func (p *Provider) doCountTokens(ctx context.Context, req llm.Request) (int, err
 		Model:  req.Model,
 		System: req.System,
 	}
-	// Thinking dispatch — same shape selection as Stream (issue #20).
-	if req.Thinking != nil {
-		switch {
-		case req.Thinking.Effort != "":
-			body.Thinking = &apiThinkingConfig{Type: "adaptive"}
-			body.OutputConfig = &apiOutputConfig{Effort: string(req.Thinking.Effort)}
-		case req.Thinking.BudgetTokens > 0:
-			body.Thinking = &apiThinkingConfig{
-				Type:         "enabled",
-				BudgetTokens: req.Thinking.BudgetTokens,
-			}
-		}
-	}
+	body.Thinking, body.OutputConfig = applyThinkingConfig(req.Thinking)
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, apiTool{
 			Name:        t.Name,
