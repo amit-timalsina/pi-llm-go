@@ -194,7 +194,36 @@ if req.CacheRetention == llm.CacheRetentionLong &&
 }
 ```
 
-OpenAI and Gemini leave the TTL-breakdown fields at zero (their cache surfaces are opaque or single-TTL). A first-party `Cost(usage, model)` helper with pricing tables is on the roadmap; until then, multiply per-token rates yourself.
+OpenAI and Gemini leave the TTL-breakdown fields at zero (their cache surfaces are opaque or single-TTL).
+
+`llm.ComputeCost` applies a built-in pricing table to a `Usage` value and returns a dollar breakdown:
+
+```go
+cost, err := llm.ComputeCost(msg.Usage, req.Model)
+if err == nil {
+    fmt.Printf("$%.4f total (in=$%.4f out=$%.4f cache_read=$%.4f cache_write_1h=$%.4f)\n",
+        cost.Total(), cost.Input, cost.Output, cost.CacheRead, cost.CacheWrite1h)
+}
+```
+
+The seed table covers the Claude 4, GPT-5, and Gemini 2.5/3.1 families (verified 2026-05-13). For any model not in the table — older snapshots, deprecated IDs, regional/batch tiers — call `llm.RegisterPricing(modelID, llm.Pricing{...})` at startup with rates pulled from your own source. Registered entries override the seed.
+
+The TTL-breakdown fields from `Usage` carry through automatically: when `CacheWrite5mTokens` and `CacheWrite1hTokens` are populated, they price against their respective tiers independently — so silent 5min fallback is reflected in the cost projection without any caller-side branching.
+
+## Token counting
+
+Anthropic and Gemini expose a count-tokens endpoint that returns the input-token count without spending an inference call. Providers implement `llm.TokenCounter` when they support this:
+
+```go
+if c, ok := provider.(llm.TokenCounter); ok {
+    n, err := c.CountTokens(ctx, req)
+    if err == nil {
+        fmt.Printf("request would consume %d input tokens\n", n)
+    }
+}
+```
+
+OpenAI's Chat Completions and Responses providers do NOT implement `TokenCounter` — OpenAI's tokenization is local-only via tiktoken, which pi-llm-go does not bundle. Callers needing a pre-flight count for an OpenAI-hosted model should run tiktoken themselves.
 
 ## Examples
 
