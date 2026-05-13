@@ -6,6 +6,36 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Structured error categories** for retry / escalation policy
+  (closes #11). Two new sentinels split out of the previous
+  catch-all `ErrProvider`:
+  - `ErrServerError` — generic 5xx (excluding 529). Consumer
+    policy: retry with backoff; escalate if sustained.
+  - `ErrOverloaded` — Anthropic-style 529 "overloaded." Consumer
+    policy: short backoff (~60s); consider provider fallback if
+    sustained.
+  - Both wrap `ErrProvider` via `fmt.Errorf("%w...")`, so
+    existing `errors.Is(err, llm.ErrProvider)` callers keep
+    matching 5xx + 529 responses unchanged. Fully backward
+    compatible.
+- `APIError.RetryAfter time.Duration` — populated by all four
+  built-in providers (Anthropic, OpenAI Chat, OpenAI Responses,
+  Gemini + Gemini Files) when the response carries a `Retry-After`
+  or `retry-after-ms` header. Surfaced in `APIError.Error()` for
+  debuggability.
+- `llm.ParseRetryAfter(http.Header) time.Duration` — helper
+  exposing the same parser. Supports RFC 7231 delta-seconds,
+  RFC 7231 HTTP-date (past dates clamp to 0), and OpenAI's
+  `retry-after-ms` precision form.
+- Sugar helpers `llm.IsRateLimited(err)`, `llm.IsOverloaded(err)`,
+  `llm.IsServerError(err)` — one-liner wrappers around
+  `errors.Is` for the common consumer-side branches.
+- `SentinelForStatus` updated to return `ErrOverloaded` for 529
+  and `ErrServerError` for other 5xx; existing 401/403→ErrAuth,
+  429→ErrRateLimit, other 4xx→ErrInvalidRequest unchanged.
+
 ## [0.5.0] - 2026-05-12
 
 Gemini Files API helper. Closes the >20 MB video gap left by v0.4.0;

@@ -111,10 +111,11 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			respBody, _ := io.ReadAll(resp.Body)
 			yield(nil, &llm.APIError{
-				Provider: "gemini",
-				Status:   resp.StatusCode,
-				Body:     respBody,
-				Inner:    llm.SentinelForStatus(resp.StatusCode),
+				Provider:   "gemini",
+				Status:     resp.StatusCode,
+				Body:       respBody,
+				Inner:      llm.SentinelForStatus(resp.StatusCode),
+				RetryAfter: llm.ParseRetryAfter(resp.Header),
 			})
 			return
 		}
