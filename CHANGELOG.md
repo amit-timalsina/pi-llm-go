@@ -6,6 +6,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-13
+
+Structured error categories + `retry-after` surfacing. Closes Noumenal
+issue #11 — consumers can now implement category-distinct retry /
+escalation policies (429 / 529 / 5xx) without parsing error strings.
+Fully backward compatible.
+
 ### Added
 
 - **Structured error categories** for retry / escalation policy
@@ -293,7 +300,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.2.0...v0.3.0
