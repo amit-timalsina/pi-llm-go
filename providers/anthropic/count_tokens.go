@@ -37,11 +37,20 @@ type countTokensResponseBody struct {
 // /v1/messages/count_tokens endpoint. Returns the input-token count
 // the request would consume if streamed. Does not warm the prompt
 // cache and bills nothing.
+//
+// Honors Options.Retry for retriable transport / rate-limit / overload
+// failures — useful when CountTokens is used in a pre-flight loop
+// against a throttled tier.
 func (p *Provider) CountTokens(ctx context.Context, req llm.Request) (int, error) {
 	if req.Model == "" {
 		return 0, fmt.Errorf("anthropic count_tokens: model is required")
 	}
+	return llm.RunWithRetry(ctx, p.retry, func() (int, error) {
+		return p.doCountTokens(ctx, req)
+	})
+}
 
+func (p *Provider) doCountTokens(ctx context.Context, req llm.Request) (int, error) {
 	body := countTokensRequestBody{
 		Model:  req.Model,
 		System: req.System,
@@ -95,7 +104,7 @@ func (p *Provider) CountTokens(ctx context.Context, req llm.Request) (int, error
 			Provider:   "anthropic",
 			Status:     resp.StatusCode,
 			Body:       respBody,
-			Inner:      llm.SentinelForStatus(resp.StatusCode),
+			Inner:      llm.SentinelFor(resp.StatusCode, respBody),
 			RetryAfter: llm.ParseRetryAfter(resp.Header),
 		}
 	}

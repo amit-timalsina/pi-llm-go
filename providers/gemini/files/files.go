@@ -364,11 +364,12 @@ func apiError(resp *http.Response, op string) error {
 		return nil
 	}
 	body, _ := io.ReadAll(resp.Body)
+	prefixed := []byte(op + ": " + string(body))
 	return &llm.APIError{
 		Provider:   "gemini-files",
 		Status:     resp.StatusCode,
-		Body:       []byte(op + ": " + string(body)),
-		Inner:      llm.SentinelForStatus(resp.StatusCode),
+		Body:       prefixed,
+		Inner:      llm.SentinelFor(resp.StatusCode, prefixed),
 		RetryAfter: llm.ParseRetryAfter(resp.Header),
 	}
 }

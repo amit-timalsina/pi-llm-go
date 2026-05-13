@@ -80,6 +80,12 @@ type Options struct {
 	// first; Headers can override it. Header values supplied here win over
 	// any default the provider would otherwise set.
 	Headers map[string]string
+
+	// Retry, when non-nil, configures provider-side retry on retriable
+	// errors (rate-limit / 5xx / network). nil disables retry. See
+	// llm.RetryPolicy for the contract; llm.DefaultRetryPolicy returns a
+	// sane starting point. Mid-stream connection breaks are not retried.
+	Retry *llm.RetryPolicy
 }
 
 // Provider is the OpenAI-compatible implementation of llm.LLM. Safe for
@@ -92,6 +98,7 @@ type Provider struct {
 	project string
 	headers map[string]string
 	client  *http.Client
+	retry   llm.RetryPolicy
 }
 
 // New constructs a Provider. APIKey is required unless Headers supplies an
@@ -114,7 +121,7 @@ func New(opts Options) (*Provider, error) {
 			headers[k] = v
 		}
 	}
-	return &Provider{
+	p := &Provider{
 		apiKey:  opts.APIKey,
 		baseURL: opts.BaseURL,
 		url:     opts.URL,
@@ -122,7 +129,11 @@ func New(opts Options) (*Provider, error) {
 		project: opts.Project,
 		headers: headers,
 		client:  opts.HTTPClient,
-	}, nil
+	}
+	if opts.Retry != nil {
+		p.retry = *opts.Retry
+	}
+	return p, nil
 }
 
 // endpoint returns the URL the provider should POST to.
@@ -134,59 +145,69 @@ func (p *Provider) endpoint() string {
 }
 
 // Stream issues a streaming completion. Provider errors surface as
-// *llm.APIError via the iterator's error half.
+// *llm.APIError via the iterator's error half. Options.Retry, when
+// set, retries the initial HTTP attempt; mid-stream connection breaks
+// are NOT retried.
 func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
 	return func(yield func(llm.StreamEvent, error) bool) {
-		body, err := buildRequestBody(req)
+		resp, err := llm.RunWithRetry(ctx, p.retry, func() (*http.Response, error) {
+			return p.doStreamRequest(ctx, req)
+		})
 		if err != nil {
-			yield(nil, fmt.Errorf("openai: build request: %w", err))
-			return
-		}
-
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint(), body)
-		if err != nil {
-			yield(nil, fmt.Errorf("openai: new request: %w", err))
-			return
-		}
-		if p.apiKey != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Accept", "text/event-stream")
-		if p.orgID != "" {
-			httpReq.Header.Set("OpenAI-Organization", p.orgID)
-		}
-		if p.project != "" {
-			httpReq.Header.Set("OpenAI-Project", p.project)
-		}
-		// User-supplied headers win over defaults — lets callers override
-		// auth (Azure's "api-key:" instead of "Authorization: Bearer").
-		for k, v := range p.headers {
-			httpReq.Header.Set(k, v)
-		}
-
-		resp, err := p.client.Do(httpReq)
-		if err != nil {
-			yield(nil, fmt.Errorf("openai: do request: %w", err))
+			yield(nil, err)
 			return
 		}
 		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			respBody, _ := io.ReadAll(resp.Body)
-			yield(nil, &llm.APIError{
-				Provider:   "openai",
-				Status:     resp.StatusCode,
-				Body:       respBody,
-				Inner:      llm.SentinelForStatus(resp.StatusCode),
-				RetryAfter: llm.ParseRetryAfter(resp.Header),
-			})
-			return
-		}
 
 		streamErr := newStreamDecoder().decode(resp.Body, yield)
 		if streamErr != nil && !errors.Is(streamErr, errIterationStopped) {
 			yield(nil, streamErr)
 		}
 	}
+}
+
+func (p *Provider) doStreamRequest(ctx context.Context, req llm.Request) (*http.Response, error) {
+	body, err := buildRequestBody(req)
+	if err != nil {
+		return nil, fmt.Errorf("openai: build request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint(), body)
+	if err != nil {
+		return nil, fmt.Errorf("openai: new request: %w", err)
+	}
+	if p.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	if p.orgID != "" {
+		httpReq.Header.Set("OpenAI-Organization", p.orgID)
+	}
+	if p.project != "" {
+		httpReq.Header.Set("OpenAI-Project", p.project)
+	}
+	// User-supplied headers win over defaults — lets callers override
+	// auth (Azure's "api-key:" instead of "Authorization: Bearer").
+	for k, v := range p.headers {
+		httpReq.Header.Set(k, v)
+	}
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("openai: do request: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return nil, &llm.APIError{
+			Provider:   "openai",
+			Status:     resp.StatusCode,
+			Body:       respBody,
+			Inner:      llm.SentinelFor(resp.StatusCode, respBody),
+			RetryAfter: llm.ParseRetryAfter(resp.Header),
+		}
+	}
+	return resp, nil
 }
