@@ -7,6 +7,11 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v0.10.0** shipped 2026-05-13 — Anthropic adaptive thinking
+  support for Opus 4.7+. New `llm.Effort` enum + `ThinkingConfig.Effort`
+  field; provider routes adaptive vs manual wire shapes per the
+  caller-set field. Closes issue #20 (Noumenal team hit v0.9.0's
+  legacy shape returning 400 on Opus 4.7). Live-smoke verified.
 - **v0.9.0** shipped 2026-05-13 — Retry middleware (`llm.RetryPolicy`,
   `Options.Retry` on every provider, `llm.RunWithRetry[T]` exported)
   + finer 4xx sentinels (`ErrContextLength`, `ErrPolicyViolation`)
