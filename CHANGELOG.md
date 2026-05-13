@@ -6,6 +6,39 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`llm.Effort` type + `ThinkingConfig.Effort` field** for Anthropic
+  adaptive extended thinking (Opus 4.6+, **required** on Opus 4.7+).
+  Closes issue #20.
+  - Constants: `llm.EffortLow`, `llm.EffortMedium`, `llm.EffortHigh`.
+  - Anthropic provider dispatches on the field that's set:
+    - `Effort` set → adaptive shape: `{"thinking":{"type":"adaptive"},
+      "output_config":{"effort":"<level>"}}`.
+    - `BudgetTokens > 0` (Effort empty) → legacy manual shape:
+      `{"thinking":{"type":"enabled","budget_tokens":N}}`.
+    - Both set → Effort wins (adaptive is the future, manual is
+      deprecated). Lets callers pre-set both during a migration.
+  - The `output_config` field is at the request TOP LEVEL (not nested
+    under thinking) per Anthropic's wire contract.
+  - `apiThinkingConfig.budget_tokens` now has `omitempty` so the
+    adaptive shape doesn't leak a `budget_tokens: 0` that Opus 4.7
+    rejects.
+  - Per-provider behavior documented on `ThinkingConfig` godoc:
+    Anthropic dispatches, Gemini honors BudgetTokens only (no Effort
+    mapping yet), OpenAI Chat ignores entirely, OpenAI Responses
+    uses its own ReasoningEffort.
+
+### Fixed
+
+- **Opus 4.7 returned 400** for any request using `ThinkingConfig`
+  (legacy `thinking.type=enabled` shape rejected by all 4.7+ models).
+  Live-smoke-confirmed: `BudgetTokens=2048` → `"thinking.type.enabled"
+  is not supported for this model. Use \"thinking.type.adaptive\" and
+  \"output_config.effort\"...`. The new `Effort` path is now the
+  correct surface for Opus 4.7. Original failure: noumenal_product
+  run `019e2260-1032-7c0a-8799-05f2aa5e4881`, 2026-05-13.
+
 ## [0.9.0] - 2026-05-13
 
 Retry middleware + finer-grained 4xx sentinels. v0.6.0's structured

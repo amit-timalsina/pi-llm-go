@@ -22,11 +22,12 @@ import (
 // fields, mirror them here — they DO affect input token counts because
 // Anthropic's tool-use system prompt varies by tool_choice setting.
 type countTokensRequestBody struct {
-	Model    string             `json:"model"`
-	System   string             `json:"system,omitempty"`
-	Messages []apiMessage       `json:"messages"`
-	Tools    []apiTool          `json:"tools,omitempty"`
-	Thinking *apiThinkingConfig `json:"thinking,omitempty"`
+	Model        string             `json:"model"`
+	System       string             `json:"system,omitempty"`
+	Messages     []apiMessage       `json:"messages"`
+	Tools        []apiTool          `json:"tools,omitempty"`
+	Thinking     *apiThinkingConfig `json:"thinking,omitempty"`
+	OutputConfig *apiOutputConfig   `json:"output_config,omitempty"`
 }
 
 type countTokensResponseBody struct {
@@ -55,12 +56,7 @@ func (p *Provider) doCountTokens(ctx context.Context, req llm.Request) (int, err
 		Model:  req.Model,
 		System: req.System,
 	}
-	if req.Thinking != nil {
-		body.Thinking = &apiThinkingConfig{
-			Type:         "enabled",
-			BudgetTokens: req.Thinking.BudgetTokens,
-		}
-	}
+	body.Thinking, body.OutputConfig = applyThinkingConfig(req.Thinking)
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, apiTool{
 			Name:        t.Name,
