@@ -141,15 +141,19 @@ Vertex AI (gs:// URIs + OAuth) is a planned future addition; v0.5 only supports 
 Non-2xx HTTP responses surface as `*llm.APIError` wrapping one of the typed sentinels — `errors.Is` works through the wrapping so consumers branch on category, not status code:
 
 ```
-ErrAuth           // 401, 403
-ErrRateLimit      // 429
-ErrInvalidRequest // other 4xx
-ErrProvider       // generic provider problem (parent of the next two)
-├─ ErrServerError // 5xx (excluding 529)
-└─ ErrOverloaded  // 529 (Anthropic infra overload)
+ErrAuth             // 401, 403
+ErrRateLimit        // 429
+ErrInvalidRequest   // other 4xx (parent of the next two)
+├─ ErrContextLength // prompt / max_tokens exceeds the model's window
+└─ ErrPolicyViolation // input rejected by content / safety policy
+ErrProvider         // generic provider problem (parent of the next two)
+├─ ErrServerError   // 5xx (excluding 529)
+└─ ErrOverloaded    // 529 (Anthropic infra overload)
 ```
 
-`ErrServerError` and `ErrOverloaded` both wrap `ErrProvider` via `%w`, so legacy `errors.Is(err, llm.ErrProvider)` keeps matching 5xx + 529 unchanged.
+`ErrServerError` and `ErrOverloaded` both wrap `ErrProvider`; `ErrContextLength` and `ErrPolicyViolation` both wrap `ErrInvalidRequest`. Legacy `errors.Is(err, ErrProvider)` and `errors.Is(err, ErrInvalidRequest)` callers keep matching the full subtree.
+
+The finer 4xx sentinels are derived by inspecting the response body — provider error schemas don't carry a canonical machine-readable category for "context too long" vs "policy violation," so pi-llm-go pattern-matches the message text. Patterns cover Anthropic / OpenAI / Gemini current shapes. For structured per-provider decoding, branch on `apiErr.Body` directly.
 
 Sugar helpers and the parsed `Retry-After`:
 
@@ -171,6 +175,25 @@ for ev, err := range provider.Stream(ctx, req) {
 ```
 
 `APIError.RetryAfter` is populated by all four built-in providers when the response carries a `Retry-After` (RFC 7231 delta-seconds or HTTP-date) or `retry-after-ms` (OpenAI's millisecond form, which wins when both are present).
+
+### Retry middleware
+
+Set `Options.Retry` on any provider to retry retriable errors (429 / 529 / 5xx / transient network failures) with exponential backoff + full jitter:
+
+```go
+p, _ := anthropic.New(anthropic.Options{
+    APIKey: key,
+    Retry:  &llm.RetryPolicy{MaxAttempts: 4, BaseDelay: time.Second, MaxDelay: 30 * time.Second},
+})
+// or use the sane defaults:
+p2, _ := anthropic.New(anthropic.Options{APIKey: key, Retry: ptr(llm.DefaultRetryPolicy())})
+```
+
+Server-supplied `Retry-After` hints dominate the exponential schedule (capped at `MaxDelay`). `ErrAuth`, `ErrInvalidRequest`, and `context.Canceled`/`DeadlineExceeded` are NOT retried — caller intent always wins.
+
+**Scope:** retry covers only the initial HTTP attempt. Once a 200 OK lands and streaming begins, the run is committed — a mid-stream connection break terminates the iterator rather than retrying, because resuming would replay events the consumer already saw. Callers needing at-least-once streaming should wrap pi-llm-go in their own idempotent replay layer.
+
+`llm.RunWithRetry[T]` is exported so callers can build cross-provider fallback / circuit-breaker logic on top.
 
 ## Cost telemetry
 

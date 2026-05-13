@@ -6,6 +6,41 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`llm.RetryPolicy` + `Options.Retry` on every provider.** Retries
+  retriable errors (429 / 529 / 5xx / transient network) with
+  exponential backoff + full jitter. Server-supplied `Retry-After`
+  hints dominate the exponential schedule, capped at `MaxDelay`.
+  `ErrAuth` / `ErrInvalidRequest` / `context.Canceled` are NOT
+  retried.
+  - Scope: only the initial HTTP attempt is retriable. Mid-stream
+    connection breaks terminate the iterator — resuming would replay
+    events the consumer already saw.
+  - `llm.DefaultRetryPolicy()` returns 4 attempts / 1s base / 30s cap.
+  - `llm.RunWithRetry[T]` is exported so callers can build
+    cross-provider fallback / circuit-breaker logic on top.
+- **`llm.ErrContextLength` and `llm.ErrPolicyViolation` sentinels**
+  wrap `ErrInvalidRequest` (4xx subtree). Detected by inspecting the
+  response body for known message patterns across Anthropic / OpenAI /
+  Gemini schemas — provider error envelopes don't carry canonical
+  machine-readable categories for these cases.
+- **`llm.ClassifyInvalidRequest(body)`** returns the most-specific
+  4xx sentinel for an error body.
+- **`llm.SentinelFor(status, body)`** combines status-code mapping with
+  body-pattern inspection — providers use this when constructing
+  `APIError` so the finer sentinels reach callers automatically.
+- **`llm.IsContextLength` / `llm.IsPolicyViolation`** sugar helpers
+  for `errors.Is`.
+
+### Changed
+
+- Every provider's APIError construction now calls `SentinelFor` instead
+  of `SentinelForStatus`, so consumers using `errors.Is(err, ErrContextLength)`
+  or `errors.Is(err, ErrPolicyViolation)` match without changes elsewhere.
+- Backward compatibility: `errors.Is(err, ErrInvalidRequest)` continues to
+  match the new child sentinels (they wrap it via `%w`).
+
 ## [0.8.1] - 2026-05-13
 
 Bug fix for Gemini `CountTokens`: the v0.8.0 implementation posted
