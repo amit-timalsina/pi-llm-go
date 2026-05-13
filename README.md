@@ -136,6 +136,42 @@ content := []llm.Block{llm.TextBlock{Text: "describe"}, llm.VideoBlock{URI: ref.
 
 Vertex AI (gs:// URIs + OAuth) is a planned future addition; v0.5 only supports the Google AI direct endpoint.
 
+## Error handling
+
+Non-2xx HTTP responses surface as `*llm.APIError` wrapping one of the typed sentinels — `errors.Is` works through the wrapping so consumers branch on category, not status code:
+
+```
+ErrAuth           // 401, 403
+ErrRateLimit      // 429
+ErrInvalidRequest // other 4xx
+ErrProvider       // generic provider problem (parent of the next two)
+├─ ErrServerError // 5xx (excluding 529)
+└─ ErrOverloaded  // 529 (Anthropic infra overload)
+```
+
+`ErrServerError` and `ErrOverloaded` both wrap `ErrProvider` via `%w`, so legacy `errors.Is(err, llm.ErrProvider)` keeps matching 5xx + 529 unchanged.
+
+Sugar helpers and the parsed `Retry-After`:
+
+```go
+for ev, err := range provider.Stream(ctx, req) {
+    if err == nil { /* consume ev */ continue }
+
+    var apiErr *llm.APIError
+    if errors.As(err, &apiErr) {
+        switch {
+        case llm.IsRateLimited(err):     // 429 → respect apiErr.RetryAfter
+        case llm.IsOverloaded(err):      // 529 → short backoff, consider failover
+        case llm.IsServerError(err):     // 5xx → retry, escalate if sustained
+        case errors.Is(err, llm.ErrAuth):
+        }
+    }
+    return err
+}
+```
+
+`APIError.RetryAfter` is populated by all four built-in providers when the response carries a `Retry-After` (RFC 7231 delta-seconds or HTTP-date) or `retry-after-ms` (OpenAI's millisecond form, which wins when both are present).
+
 ## Examples
 
 Runnable examples in `examples/`:

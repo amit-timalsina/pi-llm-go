@@ -123,7 +123,8 @@ func IsServerError(err error) bool { return errors.Is(err, ErrServerError) }
 // Retry-After / retry-after-ms headers. Returns 0 if no header is
 // present or none of them parse.
 //
-// Supported forms (checked in order):
+// Header precedence (`retry-after-ms` wins when both are present
+// because it carries sub-second precision):
 //
 //   - retry-after-ms: integer milliseconds (OpenAI convention).
 //   - Retry-After: integer seconds (RFC 7231 delta-seconds).

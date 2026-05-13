@@ -36,6 +36,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `ErrServerError` for other 5xx; existing 401/403→ErrAuth,
   429→ErrRateLimit, other 4xx→ErrInvalidRequest unchanged.
 
+### Changed
+
+- `APIError.Error()` now appends ` retry_after=<duration>` to its
+  rendered string when `RetryAfter > 0`. Pre-1.0 cosmetic change;
+  callers that string-match the error format will need to widen
+  their pattern. The wrapped sentinel + Status + Body remain in
+  the same positions for stable parsing.
+
 ## [0.5.0] - 2026-05-12
 
 Gemini Files API helper. Closes the >20 MB video gap left by v0.4.0;

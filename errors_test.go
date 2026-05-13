@@ -3,6 +3,7 @@ package llm_test
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,7 +84,7 @@ func TestAPIErrorErrorStringIncludesRetryAfter(t *testing.T) {
 		RetryAfter: 5 * time.Second,
 	}
 	s := apiErr.Error()
-	if !contains(s, "retry_after=5s") {
+	if !strings.Contains(s, "retry_after=5s") {
 		t.Errorf("Error() should include retry_after=5s; got %q", s)
 	}
 }
@@ -188,13 +189,4 @@ func TestParseRetryAfter(t *testing.T) {
 	if got := llm.ParseRetryAfter(hdr); got != 0 {
 		t.Errorf("garbage headers: got %v, want 0", got)
 	}
-}
-
-func contains(haystack, needle string) bool {
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
 }
