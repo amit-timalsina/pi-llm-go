@@ -6,6 +6,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-13
+
+Bug fix for Gemini `CountTokens`: the v0.8.0 implementation posted
+`systemInstruction` and `tools` at the top level of the count_tokens
+body, but Gemini's `:countTokens` endpoint rejects that shape with
+`"Unknown name 'systemInstruction': Cannot find field."`. The body
+must be wrapped in `{"generateContentRequest": {model, contents, ...}}`
+so the system prompt and tool definitions contribute to the count.
+
+### Fixed
+
+- **`gemini.Provider.CountTokens` now sends the wrapped body shape.**
+  Without the wrapper, any v0.8.0 caller passing a non-empty `System`
+  hit a 400 from Gemini. With the wrapper, the inner `model` field is
+  set to the fully-qualified resource name (`models/<id>`) per the
+  endpoint contract. Discovered via live-API smoke against v1beta;
+  the httptest fakes accepted the bad shape without complaint.
+- Test asserts the wrapped shape + the inner `model` field on
+  every count_tokens body to guard against regression.
+
 ## [0.8.0] - 2026-05-13
 
 Two roadmap items shipped together: pre-flight token counting (closes
@@ -371,7 +391,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.5.0...v0.6.0

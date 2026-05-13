@@ -71,8 +71,15 @@ func TestCountTokens_HitsCountEndpointAndReturnsTotal(t *testing.T) {
 		t.Errorf("path: got %q, want %q", srv.lastPath, wantPath)
 	}
 
-	// Body must contain the contents array.
+	// Body MUST be wrapped in generateContentRequest — the live v1beta
+	// endpoint rejects systemInstruction at the top level.
 	body := string(srv.lastBody)
+	if !strings.Contains(body, `"generateContentRequest":{`) {
+		t.Errorf("body missing generateContentRequest wrapper: %s", body)
+	}
+	if !strings.Contains(body, `"model":"models/`+gemini.Gemini2_5Flash+`"`) {
+		t.Errorf("body inner model field missing or wrong: %s", body)
+	}
 	if !strings.Contains(body, `"contents":[`) {
 		t.Errorf("body missing contents array: %s", body)
 	}
@@ -82,10 +89,10 @@ func TestCountTokens_HitsCountEndpointAndReturnsTotal(t *testing.T) {
 }
 
 // TestCountTokens_OmitsGenerationConfigOnIdleRequest ensures the
-// reusable buildRequestBody helper continues to omit the
-// generationConfig field when no tunables are set. Otherwise a wire-
-// bloat regression could silently land where countTokens posts an
-// empty `"generationConfig":{}`.
+// wrapped count_tokens body still omits the generationConfig field
+// when no tunables are set. Otherwise a wire-bloat regression could
+// silently land where countTokens posts an empty
+// `"generationConfig":{}`.
 func TestCountTokens_OmitsGenerationConfigOnIdleRequest(t *testing.T) {
 	t.Parallel()
 
