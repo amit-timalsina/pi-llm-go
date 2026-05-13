@@ -27,10 +27,28 @@ package llm
 // CacheRetention — OpenAI caches automatically with no caller-side
 // breakpoint API.
 //
-// All currently-shipped Claude models support both 1h cache TTL and
-// tool-level cache_control; pi-llm-go therefore does not gate on per-
-// model compat flags. Third-party Anthropic-compatible hosts that lack
-// either capability are outside the scope of v1.
+// 1h-TTL availability and fallback behavior:
+//
+// All currently-shipped Claude 4 family models (Opus 4.7, Sonnet 4.6,
+// Haiku 4.5) support 1h cache TTL. Older Claude 3.x models accept the
+// beta header but may silently downgrade the hold to the 5-minute
+// default — Anthropic does NOT error on an unsupported model. The
+// silent fallback is a real cost-budgeting hazard for callers that
+// assumed a 1h-cached prefix would survive across long iterations
+// (Noumenal issue #12).
+//
+// Detect silent fallback via the Usage breakdown: when
+// CacheRetention=long was requested, inspect the response message's
+// Usage.CacheWrite5mTokens vs CacheWrite1hTokens. If the 5m count is
+// non-zero and the 1h count is zero, the model honored the request
+// at 5min, not 1h — adjust cost projections accordingly. The two
+// fields are populated from Anthropic's cache_creation response
+// breakdown; other providers leave them at 0.
+//
+// Note that as of March 2026, Anthropic regressed the DEFAULT
+// ephemeral TTL from 60min to 5min; the 1h tier is now opt-in via
+// CacheRetentionLong + the extended-cache-ttl-2025-04-11 beta header
+// (which the Anthropic provider auto-attaches when CacheRetention=long).
 //
 // The caller owns prompt determinism: cached sections must be byte-stable
 // across iterations for the cache to hit. Any change (timestamps, map

@@ -23,8 +23,15 @@ type streamDecoder struct {
 	inputTokens      int
 	cacheReadTokens  int
 	cacheWriteTokens int
-	model            string
-	stopReason       llm.StopReason
+	// cacheWrite5mTokens / cacheWrite1hTokens are the per-TTL
+	// breakdown from Anthropic's `cache_creation.ephemeral_*_input_tokens`
+	// response field. Surfaced via Usage so consumers can detect a
+	// silent 5min fallback when CacheRetention=long was requested
+	// (closes issue #12).
+	cacheWrite5mTokens int
+	cacheWrite1hTokens int
+	model              string
+	stopReason         llm.StopReason
 
 	// activeBlockKinds maps content_block index -> kind, so deltas can be
 	// dispatched to the right delta event type and stop frames close the
@@ -100,6 +107,16 @@ func (d *streamDecoder) handleMessageStart(data string, yield func(llm.StreamEve
 				InputTokens              int `json:"input_tokens"`
 				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+				// CacheCreation, when present, breaks down
+				// cache_creation_input_tokens by TTL tier. Anthropic emits
+				// this when the request used cache_control; consumers detect
+				// silent 5min fallback by comparing
+				// CacheRetention=long (requested) vs Ephemeral5m>0 + Ephemeral1h==0
+				// (observed). Closes issue #12.
+				CacheCreation struct {
+					Ephemeral5m int `json:"ephemeral_5m_input_tokens"`
+					Ephemeral1h int `json:"ephemeral_1h_input_tokens"`
+				} `json:"cache_creation"`
 			} `json:"usage"`
 		} `json:"message"`
 	}
@@ -110,6 +127,8 @@ func (d *streamDecoder) handleMessageStart(data string, yield func(llm.StreamEve
 	d.inputTokens = ev.Message.Usage.InputTokens
 	d.cacheWriteTokens = ev.Message.Usage.CacheCreationInputTokens
 	d.cacheReadTokens = ev.Message.Usage.CacheReadInputTokens
+	d.cacheWrite5mTokens = ev.Message.Usage.CacheCreation.Ephemeral5m
+	d.cacheWrite1hTokens = ev.Message.Usage.CacheCreation.Ephemeral1h
 	if !yield(llm.EventMessageStart{Model: d.model}, nil) {
 		*stopped = true
 		return errIterationStopped
@@ -270,7 +289,14 @@ func (d *streamDecoder) handleMessageDelta(data string) error {
 			StopReason string `json:"stop_reason"`
 		} `json:"delta"`
 		Usage struct {
-			OutputTokens int `json:"output_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			InputTokens              int `json:"input_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+			CacheCreation            struct {
+				Ephemeral5m int `json:"ephemeral_5m_input_tokens"`
+				Ephemeral1h int `json:"ephemeral_1h_input_tokens"`
+			} `json:"cache_creation"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal([]byte(data), &ev); err != nil {
@@ -279,20 +305,39 @@ func (d *streamDecoder) handleMessageDelta(data string) error {
 	if ev.Delta.StopReason != "" {
 		d.stopReason = stopReasonFromAPI(ev.Delta.StopReason)
 	}
-	// message_delta also carries the final usage tally.
+	// message_delta carries the FINAL usage tally — it supersedes the
+	// per-field values captured at message_start. Overwrite each
+	// non-zero field individually so partial deltas don't clobber
+	// counts we already have.
 	if ev.Usage.OutputTokens != 0 {
-		// We finalize and emit usage in handleMessageStop; stash for now.
 		d.cachedOutputTokens = ev.Usage.OutputTokens
+	}
+	if ev.Usage.InputTokens != 0 {
+		d.inputTokens = ev.Usage.InputTokens
+	}
+	if ev.Usage.CacheCreationInputTokens != 0 {
+		d.cacheWriteTokens = ev.Usage.CacheCreationInputTokens
+	}
+	if ev.Usage.CacheReadInputTokens != 0 {
+		d.cacheReadTokens = ev.Usage.CacheReadInputTokens
+	}
+	if ev.Usage.CacheCreation.Ephemeral5m != 0 {
+		d.cacheWrite5mTokens = ev.Usage.CacheCreation.Ephemeral5m
+	}
+	if ev.Usage.CacheCreation.Ephemeral1h != 0 {
+		d.cacheWrite1hTokens = ev.Usage.CacheCreation.Ephemeral1h
 	}
 	return nil
 }
 
 func (d *streamDecoder) handleMessageStop(yield func(llm.StreamEvent, error) bool, stopped *bool) error {
 	usage := llm.Usage{
-		InputTokens:      d.inputTokens,
-		OutputTokens:     d.cachedOutputTokens,
-		CacheReadTokens:  d.cacheReadTokens,
-		CacheWriteTokens: d.cacheWriteTokens,
+		InputTokens:        d.inputTokens,
+		OutputTokens:       d.cachedOutputTokens,
+		CacheReadTokens:    d.cacheReadTokens,
+		CacheWriteTokens:   d.cacheWriteTokens,
+		CacheWrite5mTokens: d.cacheWrite5mTokens,
+		CacheWrite1hTokens: d.cacheWrite1hTokens,
 	}
 	usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 	if !yield(llm.EventMessageEnd{StopReason: d.stopReason, Usage: usage}, nil) {

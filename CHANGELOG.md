@@ -6,6 +6,34 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Per-TTL cache-write breakdown** on `Usage` (closes Noumenal
+  issue #12). Two new Anthropic-specific fields:
+  - `Usage.CacheWrite5mTokens` — tokens cached at the default ~5
+    minute TTL.
+  - `Usage.CacheWrite1hTokens` — tokens cached at the extended 1
+    hour TTL (the `extended-cache-ttl-2025-04-11` beta tier).
+  - Decoded from Anthropic's `cache_creation.ephemeral_5m_input_tokens`
+    / `ephemeral_1h_input_tokens` response fields. Other providers
+    leave both at 0.
+  - The diagnostic signal: when `CacheRetention=long` was requested
+    AND `CacheWrite5mTokens > 0` AND `CacheWrite1hTokens == 0` on the
+    response, the model silently fell back to 5min — cost projections
+    that assumed a 1h-cached prefix need to adjust. Noumenal Decision 20's
+    multi-iteration cost budget depends on this signal.
+  - `Usage.CacheWriteTokens` semantics unchanged: still the total
+    across all TTL tiers. Backward compatible.
+
+### Changed
+
+- `cache.go` godoc on `CacheRetention` now documents the 1h-TTL
+  model availability (all currently-shipped Claude 4 family models
+  support it; older Claude 3.x may silently fall back), Anthropic's
+  March 2026 regression of the default ephemeral TTL from 60 min to
+  5 min, and the structured-signal diagnostic for detecting silent
+  5min fallback via the Usage breakdown fields.
+
 ## [0.6.0] - 2026-05-13
 
 Structured error categories + `retry-after` surfacing. Closes Noumenal
