@@ -81,6 +81,34 @@ func TestCountTokens_HitsCountEndpointAndReturnsTotal(t *testing.T) {
 	}
 }
 
+// TestCountTokens_OmitsGenerationConfigOnIdleRequest ensures the
+// reusable buildRequestBody helper continues to omit the
+// generationConfig field when no tunables are set. Otherwise a wire-
+// bloat regression could silently land where countTokens posts an
+// empty `"generationConfig":{}`.
+func TestCountTokens_OmitsGenerationConfigOnIdleRequest(t *testing.T) {
+	t.Parallel()
+
+	srv := &fakeCountServer{totalTokens: 10}
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+	p := newProvider(t, ts)
+
+	_, err := p.CountTokens(context.Background(), llm.Request{
+		Model: gemini.Gemini2_5Flash,
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hello"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CountTokens: %v", err)
+	}
+	body := string(srv.lastBody)
+	if strings.Contains(body, `"generationConfig"`) {
+		t.Errorf("body should not contain generationConfig for an idle request, got: %s", body)
+	}
+}
+
 func TestCountTokens_RejectsEmptyModel(t *testing.T) {
 	t.Parallel()
 

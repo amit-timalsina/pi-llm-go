@@ -13,8 +13,14 @@ import (
 
 // countTokensRequestBody is the JSON body for POST /v1/messages/count_tokens.
 // Mirrors requestBody but drops MaxTokens and Stream — the count endpoint
-// rejects both. cache_control markers are silently allowed but ignored;
-// we omit them to keep the body lean and skip the auto-beta machinery.
+// rejects both. We also skip the cache-marker auto-placement path
+// entirely: count_tokens accepts cache_control fields but the markers
+// don't create a breakpoint, so omitting them keeps the body lean and
+// avoids needing to attach the extended-cache-ttl beta header.
+//
+// Forward-compat note: if Request grows tool_choice / parallel_tool_use
+// fields, mirror them here — they DO affect input token counts because
+// Anthropic's tool-use system prompt varies by tool_choice setting.
 type countTokensRequestBody struct {
 	Model    string             `json:"model"`
 	System   string             `json:"system,omitempty"`

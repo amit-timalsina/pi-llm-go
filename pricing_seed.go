@@ -7,8 +7,19 @@ package llm
 // Verified against provider docs on 2026-05-13:
 //
 //   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
-//   - OpenAI:    https://platform.openai.com/docs/pricing
+//   - OpenAI:    https://developers.openai.com/api/docs/pricing
 //   - Gemini:    https://ai.google.dev/gemini-api/docs/pricing
+//
+// Pricing surprise log (so a re-verification spike doesn't repeat my
+// double-takes):
+//
+//   - Claude Opus 4.5+ dropped from $15/$75 to $5/$25. Opus 4.1 and
+//     earlier remain at the legacy $15/$75 tier and are not in this
+//     seed (call RegisterPricing if you target them).
+//   - GPT-5.5 lands at $5/$30 with cached at $0.50 — a premium step up
+//     from the previous gpt-5 family ($1.25/$10). The discounted
+//     "cached input" rate is exactly 0.1× input, consistent with
+//     OpenAI's published cache-read policy.
 //
 // This table is INTENTIONALLY SMALL. The maintenance cost of an
 // exhaustive table that tracks every variant (long-context tiers, batch

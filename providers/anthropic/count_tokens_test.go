@@ -81,6 +81,43 @@ func TestCountTokens_HitsCountEndpointAndReturnsCount(t *testing.T) {
 	if !strings.Contains(body, `"model":"claude-sonnet-4-6"`) {
 		t.Errorf("body missing model field: %s", body)
 	}
+	// cache_control markers must not appear on the count_tokens wire —
+	// they're a streaming-only concern and omitting them keeps the body
+	// lean (and avoids the extended-cache-ttl beta header dance).
+	if strings.Contains(body, `"cache_control"`) {
+		t.Errorf("body should not contain cache_control, got: %s", body)
+	}
+}
+
+// TestCountTokens_OmitsCacheControlEvenWhenRetentionSet ensures that
+// setting CacheRetention=long on the request does NOT cause the
+// count_tokens body to grow cache_control markers.
+func TestCountTokens_OmitsCacheControlEvenWhenRetentionSet(t *testing.T) {
+	t.Parallel()
+
+	srv := &fakeCountServer{inputTokens: 50}
+	ts := httptest.NewServer(srv.handler())
+	defer ts.Close()
+	p := newProvider(t, ts)
+
+	_, err := p.CountTokens(context.Background(), llm.Request{
+		Model:          anthropic.ClaudeSonnet4_6,
+		System:         "lengthy static prefix",
+		CacheRetention: llm.CacheRetentionLong,
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CountTokens: %v", err)
+	}
+	if strings.Contains(string(srv.lastBody), `"cache_control"`) {
+		t.Errorf("body grew cache_control under CacheRetention=long: %s", srv.lastBody)
+	}
+	// And no anthropic-beta header should have been auto-attached.
+	if vs := srv.lastHeaders.Values("anthropic-beta"); len(vs) > 0 {
+		t.Errorf("anthropic-beta header should not be set for count_tokens, got %v", vs)
+	}
 }
 
 func TestCountTokens_RejectsEmptyModel(t *testing.T) {

@@ -5,7 +5,8 @@ import "context"
 // TokenCounter is the optional capability of counting input tokens for a
 // Request without spending an inference call. Implemented by providers
 // whose API exposes a dedicated count-tokens endpoint (Anthropic Messages
-// and Gemini both do, and bill nothing for the call).
+// and Gemini both do; both providers document the call as free today —
+// confirm against current provider docs if billing matters to you).
 //
 // Use via type assertion against an LLM value:
 //
