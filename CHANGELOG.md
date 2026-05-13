@@ -6,6 +6,32 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`TokenCounter` interface** for pre-flight token counting without
+  spending an inference call. Implemented by the Anthropic and Gemini
+  providers against their dedicated `/v1/messages/count_tokens` and
+  `:countTokens` endpoints respectively. Use via type assertion:
+  ```go
+  if c, ok := provider.(llm.TokenCounter); ok {
+      n, err := c.CountTokens(ctx, req)
+  }
+  ```
+  The OpenAI Chat Completions and Responses providers do NOT implement
+  `TokenCounter` — OpenAI's tokenization is local-only via tiktoken,
+  which pi-llm-go does not bundle.
+- **`llm.Cost` + `llm.Pricing` + `ComputeCost` / `ApplyPricing` /
+  `RegisterPricing`** for dollar-cost projection from a `Usage` record.
+  Ships a hand-curated seed table covering the Claude 4, GPT-5, and
+  Gemini 2.5/3.1 families (verified 2026-05-13 against provider docs);
+  callers register custom `Pricing` for any model not in the seed (older
+  snapshots, regional or batch tiers).
+- The TTL breakdown on `Usage` (v0.7.0) flows through `ApplyPricing`:
+  when `CacheWrite5mTokens` and `CacheWrite1hTokens` are populated, they
+  price against their respective tier rates independently, so silent
+  5min fallback (Issue #12 diagnostic) is reflected in cost projections
+  without any caller-side branching.
+
 ## [0.7.0] - 2026-05-13
 
 Per-TTL cache-write breakdown on `Usage`, providing the structured
