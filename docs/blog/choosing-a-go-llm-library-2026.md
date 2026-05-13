@@ -1,9 +1,11 @@
 ---
 title: Choosing a Go LLM library in 2026
-published: false
+published: true
 description: A technical comparison of pi-llm-go, sashabaranov/go-openai, anthropics/anthropic-sdk-go, langchaingo, and google/genai for production Go services.
 tags: go, llm, anthropic, openai
-canonical_url: https://github.com/amit-timalsina/pi-llm-go/blob/main/docs/blog/choosing-a-go-llm-library-2026.md
+# canonical_url: replace with your personal-blog URL when cross-posting.
+# Leave commented out for dev.to-as-primary; dev.to canonical handling
+# treats omitted canonical as "this IS the canonical."
 ---
 
 # Choosing a Go LLM library in 2026
