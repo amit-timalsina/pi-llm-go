@@ -103,12 +103,21 @@ func (e *APIError) Unwrap() error { return e.Inner }
 // canonical machine-readable category for "context too long" vs "policy
 // violation" vs generic 4xx, so we pattern-match the message text.
 //
-// Pattern coverage (lowercased substring matches on body bytes):
+// Pattern coverage (lowercased substring matches on body bytes — see
+// contextLengthPatterns / policyViolationPatterns for the live list):
 //
-//   - Context length: "context length", "context_length", "prompt is too long",
-//     "too many tokens", "exceeds the context window", "max_tokens"
-//   - Policy: "content policy", "content_policy", "safety",
-//     "blocked", "violates", "moderation"
+//   - Context length: phrases like "context length", "context window",
+//     "prompt is too long", "too many tokens",
+//     "maximum allowed number of output tokens" (Anthropic),
+//     "maximum context length is" (OpenAI).
+//   - Policy: "content policy" / "content_policy", "policy violation",
+//     "violates", "safety", "moderation", "blocked".
+//
+// Patterns are intentionally SPECIFIC — e.g. the request field name
+// "max_tokens" on its own is NOT a context-length signal because a
+// generic 400 like "max_tokens must be a positive integer" would
+// otherwise be misclassified. The patterns target phrases that only
+// appear in genuine context-length / policy responses.
 //
 // Provider-specific schemas (Anthropic's {"error":{"type":"...","message":"..."}},
 // OpenAI's {"error":{"code":"context_length_exceeded","message":"..."}},
@@ -132,14 +141,27 @@ func ClassifyInvalidRequest(body []byte) error {
 }
 
 var (
+	// contextLengthPatterns are phrases that ONLY appear in genuine
+	// context-length errors. The bare token name "max_tokens" was
+	// dropped after a cold-context review pointed out it would
+	// misclassify "max_tokens must be positive" and similar generic
+	// validation errors. The provider-specific phrasings below carry
+	// enough context to be unambiguous.
 	contextLengthPatterns = []string{
 		"context length",
 		"context_length",
 		"context window",
 		"prompt is too long",
 		"too many tokens",
-		"max_tokens",
 		"maximum context",
+		// Anthropic-specific: "max_tokens: N > M, which is the maximum
+		// allowed number of output tokens for <model>". The phrase
+		// "maximum allowed number of output tokens" is unique to this
+		// failure mode and avoids the bare-max_tokens false positive.
+		"maximum allowed number of output tokens",
+		// OpenAI-specific: "This model's maximum context length is
+		// 8192 tokens, however you requested ..."
+		"maximum context length is",
 	}
 	policyViolationPatterns = []string{
 		"content policy",

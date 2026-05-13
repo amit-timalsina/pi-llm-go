@@ -140,6 +140,68 @@ func TestStream_RetryDoesNotRetry400(t *testing.T) {
 	}
 }
 
+// TestStream_RetryRecoversFromNetworkLevelFailure verifies that a
+// transport-level error (server hijacks the connection and closes it
+// before any response headers) is retried — the IsRetriable net.Error
+// branch is exercised end-to-end through RunWithRetry, not just the
+// classifier unit test.
+func TestStream_RetryRecoversFromNetworkLevelFailure(t *testing.T) {
+	t.Parallel()
+
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		n := attempts.Add(1)
+		if n == 1 {
+			// Hijack the connection and close it without writing any
+			// response. From the client's perspective this surfaces
+			// as a net-level error from http.Client.Do, which
+			// IsRetriable should classify retriable.
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatalf("response writer does not support hijacking")
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				t.Fatalf("hijack: %v", err)
+			}
+			_ = conn.Close()
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, textOnlyPayload)
+	}))
+	defer srv.Close()
+
+	p, err := anthropic.New(anthropic.Options{
+		APIKey:  "test-key",
+		BaseURL: srv.URL,
+		Retry:   &llm.RetryPolicy{MaxAttempts: 3, BaseDelay: 5 * time.Millisecond, MaxDelay: 20 * time.Millisecond},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	var events int
+	for ev, err := range p.Stream(context.Background(), llm.Request{
+		Model:    anthropic.ClaudeSonnet4_6,
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	}) {
+		if err != nil {
+			t.Fatalf("stream error after retry: %v", err)
+		}
+		_ = ev
+		events++
+	}
+	if events == 0 {
+		t.Error("expected events after network-failure retry; got 0")
+	}
+	if attempts.Load() != 2 {
+		t.Errorf("attempts: got %d, want 2 (one closed, then 200)", attempts.Load())
+	}
+}
+
 // TestStream_400ClassifiedAsContextLength verifies that the SentinelFor
 // upgrade reaches Stream's caller without retry.
 func TestStream_400ClassifiedAsPolicyViolation(t *testing.T) {

@@ -11,11 +11,13 @@ func TestClassifyInvalidRequest_ContextLengthPatterns(t *testing.T) {
 	t.Parallel()
 
 	cases := []string{
-		// Anthropic
+		// Anthropic — "prompt is too long"
 		`{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 200000 tokens > 199999 maximum"}}`,
-		// OpenAI
+		// Anthropic — max_tokens-exceeds-window (the v0.9.0 live smoke case)
+		`{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: 999999999 > 128000, which is the maximum allowed number of output tokens for claude-sonnet-4-6"}}`,
+		// OpenAI — context_length_exceeded code
 		`{"error":{"message":"This model's maximum context length is 8192 tokens, however you requested 9001.","code":"context_length_exceeded"}}`,
-		// Gemini-style
+		// Gemini-style "context window"
 		`{"error":{"code":400,"message":"The request payload exceeds the context window","status":"INVALID_ARGUMENT"}}`,
 		// generic "too many tokens"
 		`{"error":"too many tokens for this model"}`,
@@ -57,6 +59,13 @@ func TestClassifyInvalidRequest_FallsBackToInvalidRequest(t *testing.T) {
 		``,
 		`{"error":{"message":"missing field 'model'"}}`,
 		`{"error":{"message":"bad parameter"}}`,
+		// The bare token name "max_tokens" is intentionally NOT a
+		// context-length signal — a generic max_tokens validation
+		// failure must stay generic ErrInvalidRequest, not get
+		// promoted. Regression guard against the pre-tightening
+		// pattern that included "max_tokens" by itself.
+		`{"error":{"message":"max_tokens must be a positive integer"}}`,
+		`{"error":{"message":"missing required field 'max_tokens'"}}`,
 	}
 	for _, body := range cases {
 		got := llm.ClassifyInvalidRequest([]byte(body))
