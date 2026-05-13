@@ -172,6 +172,30 @@ for ev, err := range provider.Stream(ctx, req) {
 
 `APIError.RetryAfter` is populated by all four built-in providers when the response carries a `Retry-After` (RFC 7231 delta-seconds or HTTP-date) or `retry-after-ms` (OpenAI's millisecond form, which wins when both are present).
 
+## Cost telemetry
+
+Every completion surfaces a typed `Usage` value on the final `EventMessageEnd` (and on the `*llm.Message` returned by `Complete` / `Accumulate`):
+
+```go
+msg, _ := llm.Complete(ctx, provider, req)
+fmt.Printf("in=%d out=%d cache_write=%d (5m=%d, 1h=%d) cache_read=%d total=%d\n",
+    msg.Usage.InputTokens, msg.Usage.OutputTokens,
+    msg.Usage.CacheWriteTokens, msg.Usage.CacheWrite5mTokens, msg.Usage.CacheWrite1hTokens,
+    msg.Usage.CacheReadTokens, msg.Usage.TotalTokens)
+```
+
+`CacheWrite5mTokens` and `CacheWrite1hTokens` are Anthropic-specific — they break `CacheWriteTokens` down by TTL tier so consumers can detect silent 5min fallback when `CacheRetention=long` was requested but the model didn't honor the extended TTL:
+
+```go
+if req.CacheRetention == llm.CacheRetentionLong &&
+    msg.Usage.CacheWrite5mTokens > 0 && msg.Usage.CacheWrite1hTokens == 0 {
+    // Model downgraded the cache hold to 5min. Cost projections that
+    // assumed a 1h-cached prefix across iterations need to adjust.
+}
+```
+
+OpenAI and Gemini leave the TTL-breakdown fields at zero (their cache surfaces are opaque or single-TTL). A first-party `Cost(usage, model)` helper with pricing tables is on the roadmap; until then, multiply per-token rates yourself.
+
 ## Examples
 
 Runnable examples in `examples/`:

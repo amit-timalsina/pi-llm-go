@@ -23,9 +23,12 @@ package llm
 //
 // Backward compat: CacheWriteTokens semantics unchanged — still the
 // total, regardless of TTL. CacheWrite5mTokens + CacheWrite1hTokens
-// equals CacheWriteTokens for Anthropic responses; the sum may be
-// LESS than CacheWriteTokens if Anthropic ships a new TTL tier we
-// haven't surfaced yet.
+// equals CacheWriteTokens for Anthropic responses today; the sum
+// may be LESS than CacheWriteTokens if Anthropic ships a new TTL
+// tier we haven't surfaced yet. CacheWriteTokens is populated from
+// the wire's pre-aggregated cache_creation_input_tokens (NOT summed
+// client-side), so the aggregate stays consistent with Anthropic's
+// billing even if our enum drifts behind the API.
 type Usage struct {
 	InputTokens  int
 	OutputTokens int

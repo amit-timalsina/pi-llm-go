@@ -45,6 +45,14 @@ package llm
 // fields are populated from Anthropic's cache_creation response
 // breakdown; other providers leave them at 0.
 //
+// The heuristic (5m>0 && 1h==0) assumes UNIFORM TTL placement
+// across all cache_control markers in the request, which
+// CacheRetention=long guarantees today (every marker carries
+// ttl:"1h"). If a future per-block-TTL feature lets callers mix
+// 5min and 1h breakpoints in one request, this diagnostic would
+// produce false positives and would need a different signal —
+// likely a per-block annotation rather than aggregate counts.
+//
 // Note that as of March 2026, Anthropic regressed the DEFAULT
 // ephemeral TTL from 60min to 5min; the 1h tier is now opt-in via
 // CacheRetentionLong + the extended-cache-ttl-2025-04-11 beta header
