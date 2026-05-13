@@ -9,16 +9,18 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	llm "github.com/amit-timalsina/pi-llm-go"
 	"github.com/amit-timalsina/pi-llm-go/providers/openai"
 )
 
 type fakeServer struct {
-	payload    string
-	statusCode int
-	statusBody string
-	lastBody   json.RawMessage
+	payload       string
+	statusCode    int
+	statusBody    string
+	statusHeaders http.Header // optional: response headers on error path
+	lastBody      json.RawMessage
 }
 
 func (f *fakeServer) handler() http.HandlerFunc {
@@ -26,6 +28,11 @@ func (f *fakeServer) handler() http.HandlerFunc {
 		body, _ := io.ReadAll(r.Body)
 		f.lastBody = json.RawMessage(body)
 		if f.statusCode != 0 && f.statusCode != http.StatusOK {
+			for k, vs := range f.statusHeaders {
+				for _, v := range vs {
+					w.Header().Add(k, v)
+				}
+			}
 			w.WriteHeader(f.statusCode)
 			_, _ = io.WriteString(w, f.statusBody)
 			return
@@ -258,5 +265,45 @@ func TestStreamHTTPError(t *testing.T) {
 	var apiErr *llm.APIError
 	if !errors.As(gotErr, &apiErr) || !strings.Contains(string(apiErr.Body), "rate limited") {
 		t.Errorf("APIError body lost: %v", gotErr)
+	}
+}
+
+// TestStreamHTTPError_RetryAfterMsFromOpenAI verifies issue #11's
+// OpenAI-specific path: a 429 response with `retry-after-ms` (the
+// header OpenAI emits with sub-second precision) is parsed into
+// APIError.RetryAfter as the corresponding time.Duration. This is
+// the same plumbing the Anthropic provider exercises with the
+// integer-seconds Retry-After form; pinning the OpenAI side
+// locks the precision-preserving path that ms-vs-seconds depends on.
+func TestStreamHTTPError_RetryAfterMsFromOpenAI(t *testing.T) {
+	hdr := http.Header{}
+	hdr.Set("retry-after-ms", "1500")
+	fs := &fakeServer{
+		statusCode:    http.StatusTooManyRequests,
+		statusBody:    `{"error":{"message":"rate limited"}}`,
+		statusHeaders: hdr,
+	}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	var gotErr error
+	for _, err := range p.Stream(context.Background(), llm.Request{
+		Model:    openai.GPT5_5,
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	}) {
+		if err != nil {
+			gotErr = err
+		}
+	}
+	if !llm.IsRateLimited(gotErr) {
+		t.Errorf("IsRateLimited=false; want true for 429 from OpenAI")
+	}
+	var apiErr *llm.APIError
+	if !errors.As(gotErr, &apiErr) {
+		t.Fatal("APIError not extractable")
+	}
+	if apiErr.RetryAfter != 1500*time.Millisecond {
+		t.Errorf("RetryAfter=%v, want 1.5s (from retry-after-ms: 1500)", apiErr.RetryAfter)
 	}
 }

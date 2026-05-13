@@ -17,11 +17,13 @@ import (
 
 // fakeServer serves a canned SSE stream over httptest. payload is the raw
 // SSE body to ship after a 200 OK; statusCode and statusBody let tests
-// simulate provider errors instead.
+// simulate provider errors instead. statusHeaders, when non-nil, are set
+// on the error response (e.g. to simulate a Retry-After header on a 429).
 type fakeServer struct {
-	payload    string
-	statusCode int
-	statusBody string
+	payload       string
+	statusCode    int
+	statusBody    string
+	statusHeaders http.Header
 
 	// lastBody captures the JSON body the test posted, for assertions.
 	lastBody json.RawMessage
@@ -37,6 +39,11 @@ func (f *fakeServer) handler() http.HandlerFunc {
 		f.lastBody = json.RawMessage(body)
 		f.lastHeaders = r.Header.Clone()
 		if f.statusCode != 0 && f.statusCode != http.StatusOK {
+			for k, vs := range f.statusHeaders {
+				for _, v := range vs {
+					w.Header().Add(k, v)
+				}
+			}
 			w.WriteHeader(f.statusCode)
 			_, _ = io.WriteString(w, f.statusBody)
 			return
@@ -269,6 +276,127 @@ func TestStreamHTTPError(t *testing.T) {
 	}
 	if !strings.Contains(string(apiErr.Body), "bad key") {
 		t.Errorf("APIError body lost: %q", string(apiErr.Body))
+	}
+}
+
+// TestStreamHTTPError_RateLimitedSurfacesRetryAfter verifies issue #11:
+// a 429 response with a Retry-After header surfaces as a structured
+// *llm.APIError with the parsed RetryAfter populated, so consumer-side
+// retry policy can honor the server's hint without re-parsing headers.
+func TestStreamHTTPError_RateLimitedSurfacesRetryAfter(t *testing.T) {
+	hdr := http.Header{}
+	hdr.Set("Retry-After", "5")
+	fs := &fakeServer{
+		statusCode:    http.StatusTooManyRequests,
+		statusBody:    `{"error":"rate limited"}`,
+		statusHeaders: hdr,
+	}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	var gotErr error
+	for _, err := range p.Stream(context.Background(), llm.Request{
+		Model:     anthropic.ClaudeOpus4_7,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+		MaxTokens: 16,
+	}) {
+		if err != nil {
+			gotErr = err
+		}
+	}
+	if gotErr == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !llm.IsRateLimited(gotErr) {
+		t.Errorf("IsRateLimited=false; want true for 429 response")
+	}
+	if !errors.Is(gotErr, llm.ErrRateLimit) {
+		t.Errorf("err should wrap ErrRateLimit")
+	}
+	var apiErr *llm.APIError
+	if !errors.As(gotErr, &apiErr) {
+		t.Fatal("APIError not extractable")
+	}
+	if apiErr.RetryAfter != 5*time.Second {
+		t.Errorf("RetryAfter=%v, want 5s", apiErr.RetryAfter)
+	}
+}
+
+// TestStreamHTTPError_OverloadedDistinctFromServerError verifies issue
+// #11's category separation: 529 unwraps to ErrOverloaded (not
+// ErrServerError), and IsOverloaded reports true while IsServerError
+// reports false. Consumers can implement distinct policies for the
+// two cases.
+func TestStreamHTTPError_OverloadedDistinctFromServerError(t *testing.T) {
+	fs := &fakeServer{
+		statusCode: 529,
+		statusBody: `{"error":"anthropic overloaded"}`,
+	}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	var gotErr error
+	for _, err := range p.Stream(context.Background(), llm.Request{
+		Model:     anthropic.ClaudeOpus4_7,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+		MaxTokens: 16,
+	}) {
+		if err != nil {
+			gotErr = err
+		}
+	}
+	if gotErr == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !llm.IsOverloaded(gotErr) {
+		t.Errorf("IsOverloaded=false; want true for 529 response")
+	}
+	if llm.IsServerError(gotErr) {
+		t.Errorf("IsServerError=true; want false (529 is a parallel category, not a 5xx subset)")
+	}
+	// Backward compat: legacy callers using errors.Is(err, ErrProvider)
+	// keep matching 529 responses since ErrOverloaded wraps ErrProvider.
+	if !errors.Is(gotErr, llm.ErrProvider) {
+		t.Errorf("529 should still match errors.Is(err, ErrProvider) for backward compat")
+	}
+}
+
+// TestStreamHTTPError_ServerErrorWrapsErrProvider verifies the
+// reverse compat path: a 503 surfaces as ErrServerError but still
+// matches errors.Is(err, ErrProvider) for legacy consumers that
+// haven't migrated to the more specific sentinel.
+func TestStreamHTTPError_ServerErrorWrapsErrProvider(t *testing.T) {
+	fs := &fakeServer{
+		statusCode: http.StatusServiceUnavailable,
+		statusBody: `{"error":"upstream down"}`,
+	}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	var gotErr error
+	for _, err := range p.Stream(context.Background(), llm.Request{
+		Model:     anthropic.ClaudeOpus4_7,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+		MaxTokens: 16,
+	}) {
+		if err != nil {
+			gotErr = err
+		}
+	}
+	if gotErr == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !llm.IsServerError(gotErr) {
+		t.Errorf("IsServerError=false; want true for 503")
+	}
+	if !errors.Is(gotErr, llm.ErrProvider) {
+		t.Errorf("503 should match errors.Is(err, ErrProvider) for backward compat")
+	}
+	if llm.IsOverloaded(gotErr) {
+		t.Errorf("503 should NOT be IsOverloaded (that's the 529-only category)")
 	}
 }
 

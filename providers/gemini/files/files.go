@@ -354,19 +354,22 @@ func (c *Client) Delete(ctx context.Context, name string) error {
 
 // apiError converts a non-2xx HTTP response into a *llm.APIError so
 // callers can branch with errors.Is on the sentinel set
-// (ErrAuth / ErrRateLimit / ErrInvalidRequest / ErrProvider).
-// Returns nil for 2xx. The op string is prepended to APIError.Body so
-// the call site is visible even when only the message is rendered.
+// (ErrAuth / ErrRateLimit / ErrInvalidRequest / ErrProvider /
+// ErrServerError / ErrOverloaded). Returns nil for 2xx. The op string
+// is prepended to APIError.Body so the call site is visible even when
+// only the message is rendered. RetryAfter is parsed from the
+// response headers when present.
 func apiError(resp *http.Response, op string) error {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
 	body, _ := io.ReadAll(resp.Body)
 	return &llm.APIError{
-		Provider: "gemini-files",
-		Status:   resp.StatusCode,
-		Body:     []byte(op + ": " + string(body)),
-		Inner:    llm.SentinelForStatus(resp.StatusCode),
+		Provider:   "gemini-files",
+		Status:     resp.StatusCode,
+		Body:       []byte(op + ": " + string(body)),
+		Inner:      llm.SentinelForStatus(resp.StatusCode),
+		RetryAfter: llm.ParseRetryAfter(resp.Header),
 	}
 }
 
