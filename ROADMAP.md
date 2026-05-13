@@ -7,6 +7,11 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v0.8.0** shipped 2026-05-13 — `TokenCounter` interface (Anthropic +
+  Gemini, against their dedicated count endpoints) + first-party
+  `Cost` / `Pricing` / `ComputeCost` helpers with a hand-curated seed
+  table for Claude 4 / GPT-5 / Gemini 2.5/3.1. The v0.7.0 TTL
+  breakdown flows through `ApplyPricing` automatically.
 - **v0.7.0** shipped 2026-05-13 — Per-TTL cache-write breakdown on
   `Usage` (`CacheWrite5mTokens` / `CacheWrite1hTokens`) decoded from
   Anthropic's `cache_creation.ephemeral_*_input_tokens` response
@@ -32,17 +37,6 @@ Reordering happens when reality changes.
   API churn + ≥1 external Go reviewer of the public surface.
 
 ## Near-term (next 1–3 minor releases)
-
-### v0.8.0 — token counting + cost helpers
-
-- `Provider.CountTokens(ctx, Request) (int, error)` — Anthropic, OpenAI,
-  and Gemini all expose this without spending an inference call.
-  Useful for cost guardrails before the request flies.
-- Optional `Cost(usage Usage, model string) (input, output, total float64)`
-  per provider with a maintained pricing table. Mario does not ship
-  this; Go consumers keep reinventing it; ours can. The per-TTL
-  Usage breakdown from v0.7.0 lets the helper price cache writes
-  correctly (1h tier bills at 2× the 5m tier on Anthropic).
 
 ### v0.9.0 — retry middleware + finer-grained errors
 

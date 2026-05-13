@@ -6,6 +6,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-13
+
+Two roadmap items shipped together: pre-flight token counting (closes
+Mario's "no count helper" gap from the WWMD audit) and first-party
+cost projection from a `Usage` record. The new helpers consume the
+v0.7.0 TTL breakdown directly, so silent 5min fallback flows into
+the cost number with zero caller-side branching.
+
 ### Added
 
 - **`TokenCounter` interface** for pre-flight token counting without
@@ -363,7 +371,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.4.0...v0.5.0
