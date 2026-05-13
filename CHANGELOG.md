@@ -6,6 +6,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-05-13
+
+Anthropic Opus 4.7 adaptive thinking support. Closes issue #20:
+v0.9.0's `thinking.type=enabled` shape returns 400 against Opus 4.7+
+models, blocking any Noumenal use of extended thinking on the new
+flagship. New `Effort` field on `ThinkingConfig` plus a provider-side
+dispatch routes to the right wire shape per model family.
+
 ### Added
 
 - **`llm.Effort` type + `ThinkingConfig.Effort` field** for Anthropic
@@ -466,7 +474,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.7.0...v0.8.0
