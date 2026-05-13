@@ -6,6 +6,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-13
+
+Per-TTL cache-write breakdown on `Usage`, providing the structured
+signal needed to detect silent 5min fallback when `CacheRetention=long`
+is requested but the model downgrades the hold. Closes Noumenal issue
+#12 — multi-iteration cost budgeting can now adjust on observed TTL
+rather than assuming the requested tier landed. Fully backward
+compatible.
+
 ### Added
 
 - **Per-TTL cache-write breakdown** on `Usage` (closes Noumenal
@@ -328,7 +337,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.3.0...v0.4.0

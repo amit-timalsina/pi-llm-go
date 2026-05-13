@@ -7,6 +7,16 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v0.7.0** shipped 2026-05-13 — Per-TTL cache-write breakdown on
+  `Usage` (`CacheWrite5mTokens` / `CacheWrite1hTokens`) decoded from
+  Anthropic's `cache_creation.ephemeral_*_input_tokens` response
+  fields. Closes Noumenal issue #12 — multi-iteration cost budgeting
+  can now detect silent 5min fallback when `CacheRetention=long` was
+  requested but the model downgraded the hold.
+- **v0.6.0** shipped 2026-05-13 — Structured error categories
+  (`ErrServerError`, `ErrOverloaded`) split out of `ErrProvider` plus
+  `APIError.RetryAfter` populated by all four providers. Closes
+  Noumenal issue #11.
 - **v0.5.0** shipped 2026-05-12 — Gemini Files API helper
   (`providers/gemini/files`): Upload / Wait / Get / Delete with
   multipart upload, ACTIVE-state polling (short-circuits on
@@ -23,25 +33,29 @@ Reordering happens when reality changes.
 
 ## Near-term (next 1–3 minor releases)
 
-### v0.6.0 — token counting + cost helpers
+### v0.8.0 — token counting + cost helpers
 
 - `Provider.CountTokens(ctx, Request) (int, error)` — Anthropic, OpenAI,
   and Gemini all expose this without spending an inference call.
   Useful for cost guardrails before the request flies.
 - Optional `Cost(usage Usage, model string) (input, output, total float64)`
   per provider with a maintained pricing table. Mario does not ship
-  this; Go consumers keep reinventing it; ours can.
+  this; Go consumers keep reinventing it; ours can. The per-TTL
+  Usage breakdown from v0.7.0 lets the helper price cache writes
+  correctly (1h tier bills at 2× the 5m tier on Anthropic).
 
-### v0.7.0 — retry middleware + finer-grained errors
+### v0.9.0 — retry middleware + finer-grained errors
 
 - Provider-side retry on rate limits + 5xx (configurable base/max
-  delay; default off; opt-in via `Options.Retry`). Keeps the no-magic
-  default while making the common ask one-liner cheap.
-- More granular error sentinels: `ErrContextLength`, `ErrPolicyViolation`,
-  `ErrContentFilter`, `ErrServerOverloaded`. Currently all collapse
-  into `ErrProvider`, forcing callers to string-match.
+  delay; default off; opt-in via `Options.Retry`). v0.6.0 surfaced
+  the categorical signals + `RetryAfter`; this turns them into a
+  one-liner default policy.
+- More granular error sentinels: `ErrContextLength`,
+  `ErrPolicyViolation`, `ErrContentFilter`. (`ErrOverloaded` already
+  shipped in v0.6.0.) Currently the remainder collapse into
+  `ErrInvalidRequest`, forcing callers to string-match.
 
-## Mid-term (v0.7+)
+## Mid-term
 
 - **Batch API** (Anthropic + OpenAI both ship async batch — ~50% off
   list). New `Batch` interface alongside `LLM`. Different lifecycle so
