@@ -18,11 +18,15 @@ import (
 //	├─ ErrServerError     // HTTP 5xx (excluding 529)
 //	└─ ErrOverloaded      // HTTP 529 (Anthropic infra overload)
 //
-// ErrServerError and ErrOverloaded each wrap ErrProvider via
-// fmt.Errorf("%w"), so existing callers using errors.Is(err, ErrProvider)
-// continue to match 5xx + 529 responses (backward compatible). The two
-// child sentinels add specificity for consumers that need distinct
-// retry / escalation policies per the category guidance in issue #11.
+//	ErrInvalidRequest     // HTTP 4xx (other than 401/403/429)
+//	├─ ErrContextLength   // prompt/output exceeds context window
+//	└─ ErrPolicyViolation // input flagged by provider safety policy
+//
+// Child sentinels wrap their parents via fmt.Errorf("%w"), so existing
+// callers using errors.Is(err, ErrInvalidRequest) or
+// errors.Is(err, ErrProvider) continue to match the full subtree
+// (backward compatible). The child sentinels add specificity for
+// consumers that need distinct retry / escalation policies.
 var (
 	ErrAuth           = errors.New("llm: authentication failed")
 	ErrRateLimit      = errors.New("llm: rate limited")
@@ -36,6 +40,18 @@ var (
 	// response. Recommended consumer policy: short backoff (~60s)
 	// then retry; consider provider fallback if sustained.
 	ErrOverloaded = fmt.Errorf("%w: overloaded (529)", ErrProvider)
+	// ErrContextLength signals that the prompt + tools + thinking
+	// budget exceeded the model's context window (or that max_tokens
+	// requested more output than the model can produce in the
+	// remaining window). Returns as a 400 in practice. Recommended
+	// consumer policy: do NOT retry as-is; truncate, summarize, or
+	// route to a longer-context model.
+	ErrContextLength = fmt.Errorf("%w: context length exceeded", ErrInvalidRequest)
+	// ErrPolicyViolation signals that the request was rejected by the
+	// provider's content / safety policy. Returns as a 400 in
+	// practice. Recommended consumer policy: do NOT retry; surface
+	// to the user or route through a moderation step.
+	ErrPolicyViolation = fmt.Errorf("%w: content policy violation", ErrInvalidRequest)
 )
 
 // APIError wraps a non-2xx HTTP response from a provider. The Inner field
@@ -74,6 +90,83 @@ func (e *APIError) Error() string {
 }
 
 func (e *APIError) Unwrap() error { return e.Inner }
+
+// ClassifyInvalidRequest inspects an error response body for known
+// substrings that identify the request as ErrContextLength or
+// ErrPolicyViolation, returning the more-specific sentinel when one
+// applies and ErrInvalidRequest otherwise.
+//
+// Used by providers when constructing APIError on a 4xx response — the
+// status code maps to ErrInvalidRequest, but the body usually contains
+// a free-form message describing the specific cause. Substring matching
+// is a pragmatic last-resort: provider response schemas don't carry a
+// canonical machine-readable category for "context too long" vs "policy
+// violation" vs generic 4xx, so we pattern-match the message text.
+//
+// Pattern coverage (lowercased substring matches on body bytes):
+//
+//   - Context length: "context length", "context_length", "prompt is too long",
+//     "too many tokens", "exceeds the context window", "max_tokens"
+//   - Policy: "content policy", "content_policy", "safety",
+//     "blocked", "violates", "moderation"
+//
+// Provider-specific schemas (Anthropic's {"error":{"type":"...","message":"..."}},
+// OpenAI's {"error":{"code":"context_length_exceeded","message":"..."}},
+// Gemini's Google-style error envelope) all surface human-readable
+// messages that hit these patterns. Callers needing structured
+// per-provider decoding should branch on apiErr.Body themselves rather
+// than rely on this classifier.
+func ClassifyInvalidRequest(body []byte) error {
+	lower := strings.ToLower(string(body))
+	for _, p := range contextLengthPatterns {
+		if strings.Contains(lower, p) {
+			return ErrContextLength
+		}
+	}
+	for _, p := range policyViolationPatterns {
+		if strings.Contains(lower, p) {
+			return ErrPolicyViolation
+		}
+	}
+	return ErrInvalidRequest
+}
+
+var (
+	contextLengthPatterns = []string{
+		"context length",
+		"context_length",
+		"context window",
+		"prompt is too long",
+		"too many tokens",
+		"max_tokens",
+		"maximum context",
+	}
+	policyViolationPatterns = []string{
+		"content policy",
+		"content_policy",
+		"policy violation",
+		"violates",
+		"safety",
+		"moderation",
+		"blocked",
+	}
+)
+
+// SentinelFor returns the most specific sentinel for an HTTP error
+// response, combining status-code mapping with body-pattern inspection
+// for 400 responses. Equivalent to SentinelForStatus(status) for non-400
+// responses; for 400s, upgrades to ErrContextLength / ErrPolicyViolation
+// when the body matches a known pattern (see ClassifyInvalidRequest).
+//
+// Prefer this over SentinelForStatus when constructing APIError values —
+// the finer sentinels are part of pi-llm-go's public error surface.
+func SentinelFor(status int, body []byte) error {
+	s := SentinelForStatus(status)
+	if errors.Is(s, ErrInvalidRequest) && len(body) > 0 {
+		return ClassifyInvalidRequest(body)
+	}
+	return s
+}
 
 // SentinelForStatus maps an HTTP status code to the matching sentinel
 // error. Used by provider implementations when constructing APIError.
@@ -118,6 +211,14 @@ func IsOverloaded(err error) bool { return errors.Is(err, ErrOverloaded) }
 // IsServerError reports whether err is a generic 5xx response
 // (excluding 529; check IsOverloaded for that case).
 func IsServerError(err error) bool { return errors.Is(err, ErrServerError) }
+
+// IsContextLength reports whether err is a context-length-exceeded
+// error. Sugar for errors.Is(err, ErrContextLength).
+func IsContextLength(err error) bool { return errors.Is(err, ErrContextLength) }
+
+// IsPolicyViolation reports whether err is a content-policy rejection.
+// Sugar for errors.Is(err, ErrPolicyViolation).
+func IsPolicyViolation(err error) bool { return errors.Is(err, ErrPolicyViolation) }
 
 // ParseRetryAfter extracts a wait hint from a provider response's
 // Retry-After / retry-after-ms headers. Returns 0 if no header is
