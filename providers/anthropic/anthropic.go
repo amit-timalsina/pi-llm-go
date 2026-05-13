@@ -50,6 +50,14 @@ type Options struct {
 	Version    string       // default "2023-06-01"
 	HTTPClient *http.Client // default http.DefaultClient
 	Beta       []string     // optional anthropic-beta header values
+
+	// Retry, when non-nil, configures provider-side retry on retriable
+	// errors (rate-limit / overloaded / 5xx / network). nil disables
+	// retry. See llm.RetryPolicy for the contract; llm.DefaultRetryPolicy
+	// returns a sane starting point. Retry covers Stream's initial HTTP
+	// attempt AND CountTokens; mid-stream connection breaks are not
+	// retried (committing would replay events to the consumer).
+	Retry *llm.RetryPolicy
 }
 
 // Provider is the Anthropic implementation of llm.LLM. Safe for concurrent
@@ -61,6 +69,7 @@ type Provider struct {
 	version string
 	beta    []string
 	client  *http.Client
+	retry   llm.RetryPolicy
 }
 
 // New constructs a Provider. Returns an error if APIKey is empty after
@@ -80,70 +89,39 @@ func New(opts Options) (*Provider, error) {
 	if opts.HTTPClient == nil {
 		opts.HTTPClient = http.DefaultClient
 	}
-	return &Provider{
+	p := &Provider{
 		apiKey:  opts.APIKey,
 		baseURL: opts.BaseURL,
 		version: opts.Version,
 		beta:    append([]string{}, opts.Beta...),
 		client:  opts.HTTPClient,
-	}, nil
+	}
+	if opts.Retry != nil {
+		p.retry = *opts.Retry
+	}
+	return p, nil
 }
 
 // Stream issues a streaming completion request. The iterator yields events
 // in order; an error value terminates iteration. Provider HTTP errors are
 // wrapped in *llm.APIError so callers can use errors.Is on the sentinels.
+//
+// When Options.Retry is non-nil, the initial HTTP attempt (including
+// body construction, request build, Do, and non-2xx detection) is
+// retried per the policy. Once a 200 OK lands and the streaming decoder
+// begins yielding events, the run is committed — a mid-stream
+// connection break terminates the iterator with the wrapped error
+// rather than retrying.
 func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
 	return func(yield func(llm.StreamEvent, error) bool) {
-		body, autoBeta, err := buildRequestBody(req)
+		resp, err := llm.RunWithRetry(ctx, p.retry, func() (*http.Response, error) {
+			return p.doStreamRequest(ctx, req)
+		})
 		if err != nil {
-			yield(nil, fmt.Errorf("anthropic: build request: %w", err))
-			return
-		}
-
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/v1/messages", body)
-		if err != nil {
-			yield(nil, fmt.Errorf("anthropic: new request: %w", err))
-			return
-		}
-		httpReq.Header.Set("x-api-key", p.apiKey)
-		httpReq.Header.Set("anthropic-version", p.version)
-		httpReq.Header.Set("content-type", "application/json")
-		httpReq.Header.Set("accept", "text/event-stream")
-		// Caller-supplied beta values first, then auto-applied ones (e.g.
-		// extended-cache-ttl-2025-04-11 when any breakpoint has TTL "1h").
-		// De-dup so we never send the same beta twice.
-		seenBeta := make(map[string]bool, len(p.beta)+len(autoBeta))
-		for _, b := range p.beta {
-			if !seenBeta[b] {
-				httpReq.Header.Add("anthropic-beta", b)
-				seenBeta[b] = true
-			}
-		}
-		for _, b := range autoBeta {
-			if !seenBeta[b] {
-				httpReq.Header.Add("anthropic-beta", b)
-				seenBeta[b] = true
-			}
-		}
-
-		resp, err := p.client.Do(httpReq)
-		if err != nil {
-			yield(nil, fmt.Errorf("anthropic: do request: %w", err))
+			yield(nil, err)
 			return
 		}
 		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			respBody, _ := io.ReadAll(resp.Body)
-			yield(nil, &llm.APIError{
-				Provider:   "anthropic",
-				Status:     resp.StatusCode,
-				Body:       respBody,
-				Inner:      llm.SentinelForStatus(resp.StatusCode),
-				RetryAfter: llm.ParseRetryAfter(resp.Header),
-			})
-			return
-		}
 
 		// streamEvents drains the SSE response, translating to llm.StreamEvent.
 		// It writes to a channel of (event, err) pairs that the iterator
@@ -154,4 +132,58 @@ func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.St
 			yield(nil, streamErr)
 		}
 	}
+}
+
+// doStreamRequest performs a single Stream HTTP attempt. Returns the
+// 2xx response (caller closes the body) or a *llm.APIError / wrapped
+// error on failure. Retry-eligible per llm.IsRetriable for the
+// returned error.
+func (p *Provider) doStreamRequest(ctx context.Context, req llm.Request) (*http.Response, error) {
+	body, autoBeta, err := buildRequestBody(req)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: build request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/v1/messages", body)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: new request: %w", err)
+	}
+	httpReq.Header.Set("x-api-key", p.apiKey)
+	httpReq.Header.Set("anthropic-version", p.version)
+	httpReq.Header.Set("content-type", "application/json")
+	httpReq.Header.Set("accept", "text/event-stream")
+	// Caller-supplied beta values first, then auto-applied ones (e.g.
+	// extended-cache-ttl-2025-04-11 when any breakpoint has TTL "1h").
+	// De-dup so we never send the same beta twice.
+	seenBeta := make(map[string]bool, len(p.beta)+len(autoBeta))
+	for _, b := range p.beta {
+		if !seenBeta[b] {
+			httpReq.Header.Add("anthropic-beta", b)
+			seenBeta[b] = true
+		}
+	}
+	for _, b := range autoBeta {
+		if !seenBeta[b] {
+			httpReq.Header.Add("anthropic-beta", b)
+			seenBeta[b] = true
+		}
+	}
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: do request: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return nil, &llm.APIError{
+			Provider:   "anthropic",
+			Status:     resp.StatusCode,
+			Body:       respBody,
+			Inner:      llm.SentinelFor(resp.StatusCode, respBody),
+			RetryAfter: llm.ParseRetryAfter(resp.Header),
+		}
+	}
+	return resp, nil
 }

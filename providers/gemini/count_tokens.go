@@ -57,7 +57,12 @@ func (p *Provider) CountTokens(ctx context.Context, req llm.Request) (int, error
 	if req.Model == "" {
 		return 0, fmt.Errorf("gemini count_tokens: model is required")
 	}
+	return llm.RunWithRetry(ctx, p.retry, func() (int, error) {
+		return p.doCountTokens(ctx, req)
+	})
+}
 
+func (p *Provider) doCountTokens(ctx context.Context, req llm.Request) (int, error) {
 	inner, err := buildCountInnerBody(req)
 	if err != nil {
 		return 0, fmt.Errorf("gemini count_tokens: build request: %w", err)
@@ -89,7 +94,7 @@ func (p *Provider) CountTokens(ctx context.Context, req llm.Request) (int, error
 			Provider:   "gemini",
 			Status:     resp.StatusCode,
 			Body:       respBody,
-			Inner:      llm.SentinelForStatus(resp.StatusCode),
+			Inner:      llm.SentinelFor(resp.StatusCode, respBody),
 			RetryAfter: llm.ParseRetryAfter(resp.Header),
 		}
 	}

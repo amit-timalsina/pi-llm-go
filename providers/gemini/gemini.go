@@ -52,6 +52,11 @@ type Options struct {
 	// HTTPClient overrides the default net/http client. Required for
 	// OpenTelemetry instrumentation, custom timeouts, or test fakes.
 	HTTPClient *http.Client
+
+	// Retry, when non-nil, configures provider-side retry on retriable
+	// errors. See llm.RetryPolicy. Mid-stream connection breaks are not
+	// retried.
+	Retry *llm.RetryPolicy
 }
 
 // Provider implements llm.LLM against the Gemini API.
@@ -59,6 +64,7 @@ type Provider struct {
 	apiKey  string
 	baseURL string
 	client  *http.Client
+	retry   llm.RetryPolicy
 }
 
 // New constructs a Provider. Returns an error if APIKey is empty.
@@ -74,52 +80,66 @@ func New(opts Options) (*Provider, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Provider{
+	p := &Provider{
 		apiKey:  opts.APIKey,
 		baseURL: base,
 		client:  client,
-	}, nil
+	}
+	if opts.Retry != nil {
+		p.retry = *opts.Retry
+	}
+	return p, nil
 }
 
 // Stream implements llm.LLM. Posts to
 // {base}/v1beta/models/{model}:streamGenerateContent?alt=sse and parses
-// the SSE response into llm.StreamEvent values.
+// the SSE response into llm.StreamEvent values. Options.Retry, when
+// set, retries the initial HTTP attempt; mid-stream connection breaks
+// are NOT retried.
 func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
 	return func(yield func(llm.StreamEvent, error) bool) {
-		body, err := buildRequestBody(req)
+		resp, err := llm.RunWithRetry(ctx, p.retry, func() (*http.Response, error) {
+			return p.doStreamRequest(ctx, req)
+		})
 		if err != nil {
-			yield(nil, fmt.Errorf("gemini: build request: %w", err))
-			return
-		}
-		url := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse", p.baseURL, req.Model)
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
-		if err != nil {
-			yield(nil, fmt.Errorf("gemini: new request: %w", err))
-			return
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("x-goog-api-key", p.apiKey)
-		httpReq.Header.Set("Accept", "text/event-stream")
-
-		resp, err := p.client.Do(httpReq)
-		if err != nil {
-			yield(nil, fmt.Errorf("gemini: do request: %w", err))
+			yield(nil, err)
 			return
 		}
 		defer func() { _ = resp.Body.Close() }()
 
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			respBody, _ := io.ReadAll(resp.Body)
-			yield(nil, &llm.APIError{
-				Provider:   "gemini",
-				Status:     resp.StatusCode,
-				Body:       respBody,
-				Inner:      llm.SentinelForStatus(resp.StatusCode),
-				RetryAfter: llm.ParseRetryAfter(resp.Header),
-			})
-			return
-		}
-
 		decodeStream(resp.Body, req.Model, yield)
 	}
+}
+
+func (p *Provider) doStreamRequest(ctx context.Context, req llm.Request) (*http.Response, error) {
+	body, err := buildRequestBody(req)
+	if err != nil {
+		return nil, fmt.Errorf("gemini: build request: %w", err)
+	}
+	url := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse", p.baseURL, req.Model)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("gemini: new request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-goog-api-key", p.apiKey)
+	httpReq.Header.Set("Accept", "text/event-stream")
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("gemini: do request: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return nil, &llm.APIError{
+			Provider:   "gemini",
+			Status:     resp.StatusCode,
+			Body:       respBody,
+			Inner:      llm.SentinelFor(resp.StatusCode, respBody),
+			RetryAfter: llm.ParseRetryAfter(resp.Header),
+		}
+	}
+	return resp, nil
 }

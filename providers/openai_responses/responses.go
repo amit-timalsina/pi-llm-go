@@ -77,6 +77,11 @@ type Options struct {
 	// streaming (response.reasoning_summary_* events). The summary is
 	// surfaced as llm.ThinkingBlock content. Honored by reasoning models.
 	IncludeReasoningSummary bool
+
+	// Retry, when non-nil, configures provider-side retry on retriable
+	// errors. See llm.RetryPolicy. Mid-stream connection breaks are not
+	// retried.
+	Retry *llm.RetryPolicy
 }
 
 // Provider is the Responses API implementation of llm.LLM.
@@ -90,6 +95,7 @@ type Provider struct {
 	reasoningEffort         ReasoningEffort
 	includeReasoningSummary bool
 	client                  *http.Client
+	retry                   llm.RetryPolicy
 }
 
 // New constructs a Provider. APIKey is required unless Headers supplies an
@@ -111,7 +117,7 @@ func New(opts Options) (*Provider, error) {
 			headers[k] = v
 		}
 	}
-	return &Provider{
+	p := &Provider{
 		apiKey:                  opts.APIKey,
 		baseURL:                 opts.BaseURL,
 		url:                     opts.URL,
@@ -121,7 +127,11 @@ func New(opts Options) (*Provider, error) {
 		reasoningEffort:         opts.ReasoningEffort,
 		includeReasoningSummary: opts.IncludeReasoningSummary,
 		client:                  opts.HTTPClient,
-	}, nil
+	}
+	if opts.Retry != nil {
+		p.retry = *opts.Retry
+	}
+	return p, nil
 }
 
 func (p *Provider) endpoint() string {
@@ -132,57 +142,67 @@ func (p *Provider) endpoint() string {
 }
 
 // Stream issues a streaming request to /responses. Provider errors surface
-// through the iterator as *llm.APIError.
+// through the iterator as *llm.APIError. Options.Retry, when set,
+// retries the initial HTTP attempt; mid-stream connection breaks are
+// NOT retried.
 func (p *Provider) Stream(ctx context.Context, req llm.Request) iter.Seq2[llm.StreamEvent, error] {
 	return func(yield func(llm.StreamEvent, error) bool) {
-		body, err := buildRequestBody(req, p.reasoningEffort, p.includeReasoningSummary)
+		resp, err := llm.RunWithRetry(ctx, p.retry, func() (*http.Response, error) {
+			return p.doStreamRequest(ctx, req)
+		})
 		if err != nil {
-			yield(nil, fmt.Errorf("openai_responses: build request: %w", err))
-			return
-		}
-
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint(), body)
-		if err != nil {
-			yield(nil, fmt.Errorf("openai_responses: new request: %w", err))
-			return
-		}
-		if p.apiKey != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Accept", "text/event-stream")
-		if p.orgID != "" {
-			httpReq.Header.Set("OpenAI-Organization", p.orgID)
-		}
-		if p.project != "" {
-			httpReq.Header.Set("OpenAI-Project", p.project)
-		}
-		for k, v := range p.headers {
-			httpReq.Header.Set(k, v)
-		}
-
-		resp, err := p.client.Do(httpReq)
-		if err != nil {
-			yield(nil, fmt.Errorf("openai_responses: do request: %w", err))
+			yield(nil, err)
 			return
 		}
 		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			respBody, _ := io.ReadAll(resp.Body)
-			yield(nil, &llm.APIError{
-				Provider:   "openai_responses",
-				Status:     resp.StatusCode,
-				Body:       respBody,
-				Inner:      llm.SentinelForStatus(resp.StatusCode),
-				RetryAfter: llm.ParseRetryAfter(resp.Header),
-			})
-			return
-		}
 
 		streamErr := newStreamDecoder().decode(resp.Body, yield)
 		if streamErr != nil && !errors.Is(streamErr, errIterationStopped) {
 			yield(nil, streamErr)
 		}
 	}
+}
+
+func (p *Provider) doStreamRequest(ctx context.Context, req llm.Request) (*http.Response, error) {
+	body, err := buildRequestBody(req, p.reasoningEffort, p.includeReasoningSummary)
+	if err != nil {
+		return nil, fmt.Errorf("openai_responses: build request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint(), body)
+	if err != nil {
+		return nil, fmt.Errorf("openai_responses: new request: %w", err)
+	}
+	if p.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	if p.orgID != "" {
+		httpReq.Header.Set("OpenAI-Organization", p.orgID)
+	}
+	if p.project != "" {
+		httpReq.Header.Set("OpenAI-Project", p.project)
+	}
+	for k, v := range p.headers {
+		httpReq.Header.Set(k, v)
+	}
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("openai_responses: do request: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return nil, &llm.APIError{
+			Provider:   "openai_responses",
+			Status:     resp.StatusCode,
+			Body:       respBody,
+			Inner:      llm.SentinelFor(resp.StatusCode, respBody),
+			RetryAfter: llm.ParseRetryAfter(resp.Header),
+		}
+	}
+	return resp, nil
 }
