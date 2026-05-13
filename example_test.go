@@ -131,6 +131,41 @@ func ExampleRequest_toolCalling() {
 	}
 }
 
+// ExampleThinkingConfig shows the two Anthropic extended-thinking
+// shapes pi-llm-go supports. Pick the shape that matches the model:
+//
+//   - Opus 4.7 / Opus 4.6 / Sonnet 4.6: set Effort.
+//   - Opus 4.5 / Sonnet 4.5 / Sonnet 3.7: set BudgetTokens.
+//
+// When both fields are set, Effort wins (adaptive shape emitted) —
+// useful when a single config object flows through multiple models
+// during a migration.
+func ExampleThinkingConfig() {
+	p, _ := anthropic.New(anthropic.Options{APIKey: os.Getenv("ANTHROPIC_API_KEY")})
+
+	// Adaptive thinking (Opus 4.7+): model decides depth within Effort.
+	adaptiveReq := llm.Request{
+		Model:     anthropic.ClaudeOpus4_7,
+		MaxTokens: 4096,
+		Thinking:  &llm.ThinkingConfig{Effort: llm.EffortMedium},
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "Reason carefully about X."}}},
+		},
+	}
+	_, _ = llm.Complete(context.Background(), p, adaptiveReq)
+
+	// Manual thinking (Opus 4.5 and older): caller pins the token cap.
+	manualReq := llm.Request{
+		Model:     "claude-opus-4-5",
+		MaxTokens: 4096,
+		Thinking:  &llm.ThinkingConfig{BudgetTokens: 2048},
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "Reason carefully about X."}}},
+		},
+	}
+	_, _ = llm.Complete(context.Background(), p, manualReq)
+}
+
 // ExampleCacheRetention shows enabling Anthropic prompt caching at the
 // 1-hour TTL tier. Cache breakpoints are auto-placed at the end of
 // System / last Tool / last user message block. Cache hits surface via

@@ -65,19 +65,90 @@ type Request struct {
 	CacheRetention CacheRetention
 }
 
-// ThinkingConfig enables extended thinking on supported models. Honored by
-// the Anthropic provider. Ignored by the OpenAI-compatible provider in v1.
+// ThinkingConfig enables extended thinking on supported models.
+//
+// Per-provider behavior of the two fields:
+//
+//   - **Anthropic**: dispatches on the field that's set. Effort emits
+//     the adaptive shape (Opus 4.6+, required on 4.7+). BudgetTokens
+//     emits the manual shape (Opus 4.5- / Sonnet 3.7, deprecated on
+//     4.6 family).
+//   - **Gemini**: honors BudgetTokens only (mapped to thinkingBudget;
+//     -1=dynamic, 0=disabled). Effort is currently ignored on Gemini
+//     because Gemini's wire shape is an integer budget rather than an
+//     enum; revisit if Gemini ships an effort-style knob.
+//   - **OpenAI Chat Completions**: ignores the entire field;
+//     reasoning-effort dialects vary across compatible hosts and
+//     don't map portably.
+//   - **OpenAI Responses**: ignores this field; the provider routes
+//     reasoning-effort via its own Options.ReasoningEffort enum.
+//
+// Anthropic has two on-wire shapes for extended thinking, gated by
+// model:
+//
+//   - **Adaptive** (Opus 4.7+, recommended on Opus/Sonnet 4.6+) —
+//     `thinking.type = "adaptive"` plus a TOP-LEVEL `output_config.effort`
+//     enum. The model decides how many thinking tokens to spend within
+//     the effort bucket. REQUIRED on Opus 4.7+; manual mode returns 400.
+//   - **Manual** (Opus 4.5- and Sonnet 3.7, deprecated on 4.6 family) —
+//     `thinking.type = "enabled"` plus `thinking.budget_tokens`. The
+//     caller pins the exact token cap.
+//
+// Set the field that matches the model's expectation. When both Effort
+// and BudgetTokens are set on the same request, the provider emits the
+// adaptive shape (Effort wins) — adaptive is the future, manual is
+// deprecated.
+//
+// See [closes #20] for the live failure that motivated the dispatch.
+//
+// [closes #20]: https://github.com/amit-timalsina/pi-llm-go/issues/20
 type ThinkingConfig struct {
-	// BudgetTokens is the maximum number of thinking tokens the model may
-	// emit before producing the final response. Required when ThinkingConfig
-	// is non-nil. Provider minimums apply (Anthropic: 1024).
+	// Effort controls thinking depth on adaptive-thinking models (Opus
+	// 4.6+, REQUIRED on 4.7+). Set to one of the Effort* constants.
+	// Empty string means "don't request adaptive thinking"; provider
+	// will fall back to BudgetTokens (manual mode) if non-zero.
 	//
-	// IMPORTANT: Anthropic requires Request.MaxTokens > BudgetTokens because
-	// thinking tokens are counted against max_tokens. A common safe choice
-	// is MaxTokens == BudgetTokens * 2, giving roughly equal budget to the
-	// reasoning trace and the visible answer.
+	// On Anthropic the wire shape is `{ "thinking": { "type":
+	// "adaptive" }, "output_config": { "effort": <Effort> } }` (note
+	// output_config is a TOP-LEVEL request field, not nested under
+	// thinking).
+	Effort Effort
+
+	// BudgetTokens is the manual-mode thinking-token cap. Required on
+	// Opus 4.5 and older / Sonnet 3.7. Deprecated on Opus/Sonnet 4.6.
+	// Rejected on Opus 4.7+ — those models REQUIRE Effort and return
+	// a 400 if budget_tokens appears on the wire.
+	//
+	// Anthropic requires Request.MaxTokens > BudgetTokens (thinking
+	// tokens count against max_tokens). A common safe choice is
+	// MaxTokens == BudgetTokens * 2.
+	//
+	// Provider minimum: Anthropic refuses BudgetTokens < 1024.
+	//
+	// When both Effort and BudgetTokens are set, Effort wins (adaptive
+	// shape emitted, BudgetTokens ignored). This lets callers pre-set
+	// both during the migration without per-call branching.
 	BudgetTokens int
 }
+
+// Effort is the adaptive-thinking depth enum. Honored by Anthropic on
+// Opus 4.6+ via the top-level `output_config.effort` field. Empty
+// string is the zero value and means "don't request adaptive thinking";
+// the provider falls back to BudgetTokens (manual mode) if non-zero.
+//
+// The OpenAI Responses provider has its own per-provider
+// ReasoningEffort enum on its Options; the two are intentionally
+// separate because the values are not 1:1.
+type Effort string
+
+// Effort levels recognized by Anthropic's adaptive thinking. Match the
+// wire enum exactly — do NOT alias to numbers or "minimal" / "xhigh"
+// without confirming the model accepts them.
+const (
+	EffortLow    Effort = "low"
+	EffortMedium Effort = "medium"
+	EffortHigh   Effort = "high"
+)
 
 // Complete drains a streaming completion and returns the final assistant
 // message. It is equivalent to iterating Stream and folding each event

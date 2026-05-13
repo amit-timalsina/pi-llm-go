@@ -32,7 +32,12 @@ type requestBody struct {
 	Temperature   *float64           `json:"temperature,omitempty"`
 	StopSequences []string           `json:"stop_sequences,omitempty"`
 	Thinking      *apiThinkingConfig `json:"thinking,omitempty"`
-	Stream        bool               `json:"stream"`
+	// OutputConfig carries the adaptive-thinking effort enum on
+	// Opus 4.6+ models. It's a TOP-LEVEL request field (not nested
+	// under thinking) per Anthropic's wire contract, separate from
+	// the legacy budget_tokens path that lives inside thinking.
+	OutputConfig *apiOutputConfig `json:"output_config,omitempty"`
+	Stream       bool             `json:"stream"`
 }
 
 type apiMessage struct {
@@ -96,9 +101,27 @@ type apiTool struct {
 	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
 }
 
+// apiThinkingConfig is the on-wire shape for the `thinking` field.
+// Two flavors:
+//
+//   - Adaptive (Opus 4.6+, REQUIRED on 4.7+): {"type":"adaptive"} —
+//     BudgetTokens MUST be omitted; Opus 4.7 returns 400 if present.
+//   - Manual (Opus 4.5- / Sonnet 3.7, deprecated on 4.6 family):
+//     {"type":"enabled", "budget_tokens": N}.
+//
+// `budget_tokens` is tagged `omitempty` so the adaptive shape doesn't
+// leak a `budget_tokens: 0` field that Opus 4.7 would reject.
 type apiThinkingConfig struct {
 	Type         string `json:"type"`
-	BudgetTokens int    `json:"budget_tokens"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
+}
+
+// apiOutputConfig is the top-level `output_config` request field that
+// carries the adaptive-thinking effort enum. Separate from the
+// `thinking` block per Anthropic's wire contract — `effort` lives at
+// the request root, not under thinking.
+type apiOutputConfig struct {
+	Effort string `json:"effort,omitempty"`
 }
 
 // buildRequestBody serializes a llm.Request into Anthropic's wire format.
@@ -141,10 +164,21 @@ func buildRequestBody(req llm.Request) (io.Reader, []string, error) {
 		body.System = req.System
 	}
 
+	// Thinking dispatch — Anthropic has two on-wire shapes (issue #20).
+	// When both Effort and BudgetTokens are set, Effort wins: adaptive
+	// is the future, manual is deprecated. When only BudgetTokens is
+	// set, emit the legacy manual shape for backward compat. When
+	// neither is set, omit the field entirely (no thinking).
 	if req.Thinking != nil {
-		body.Thinking = &apiThinkingConfig{
-			Type:         "enabled",
-			BudgetTokens: req.Thinking.BudgetTokens,
+		switch {
+		case req.Thinking.Effort != "":
+			body.Thinking = &apiThinkingConfig{Type: "adaptive"}
+			body.OutputConfig = &apiOutputConfig{Effort: string(req.Thinking.Effort)}
+		case req.Thinking.BudgetTokens > 0:
+			body.Thinking = &apiThinkingConfig{
+				Type:         "enabled",
+				BudgetTokens: req.Thinking.BudgetTokens,
+			}
 		}
 	}
 

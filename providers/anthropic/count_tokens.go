@@ -22,11 +22,12 @@ import (
 // fields, mirror them here — they DO affect input token counts because
 // Anthropic's tool-use system prompt varies by tool_choice setting.
 type countTokensRequestBody struct {
-	Model    string             `json:"model"`
-	System   string             `json:"system,omitempty"`
-	Messages []apiMessage       `json:"messages"`
-	Tools    []apiTool          `json:"tools,omitempty"`
-	Thinking *apiThinkingConfig `json:"thinking,omitempty"`
+	Model        string             `json:"model"`
+	System       string             `json:"system,omitempty"`
+	Messages     []apiMessage       `json:"messages"`
+	Tools        []apiTool          `json:"tools,omitempty"`
+	Thinking     *apiThinkingConfig `json:"thinking,omitempty"`
+	OutputConfig *apiOutputConfig   `json:"output_config,omitempty"`
 }
 
 type countTokensResponseBody struct {
@@ -55,10 +56,17 @@ func (p *Provider) doCountTokens(ctx context.Context, req llm.Request) (int, err
 		Model:  req.Model,
 		System: req.System,
 	}
+	// Thinking dispatch — same shape selection as Stream (issue #20).
 	if req.Thinking != nil {
-		body.Thinking = &apiThinkingConfig{
-			Type:         "enabled",
-			BudgetTokens: req.Thinking.BudgetTokens,
+		switch {
+		case req.Thinking.Effort != "":
+			body.Thinking = &apiThinkingConfig{Type: "adaptive"}
+			body.OutputConfig = &apiOutputConfig{Effort: string(req.Thinking.Effort)}
+		case req.Thinking.BudgetTokens > 0:
+			body.Thinking = &apiThinkingConfig{
+				Type:         "enabled",
+				BudgetTokens: req.Thinking.BudgetTokens,
+			}
 		}
 	}
 	for _, t := range req.Tools {
