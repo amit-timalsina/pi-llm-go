@@ -1,0 +1,173 @@
+# pi-llm-go
+
+> Minimal, provider-agnostic LLM client for Go. Streaming completions, tool calling, prompt caching, token counting, cost projection, and retry middleware for Anthropic Claude (Messages API), OpenAI (Chat Completions + Responses API, including GPT-5 family), Google Gemini (text / image / video), and any OpenAI-compatible endpoint (Azure OpenAI, Groq, Together, vLLM, OpenRouter, Ollama). Go 1.23+, idiomatic: `iter.Seq2` streaming, sealed sum types, `errors.Is` sentinels.
+
+## Install
+
+```
+go get github.com/amit-timalsina/pi-llm-go
+```
+
+## Core types
+
+- `llm.LLM` — provider interface; one method: `Stream(ctx, Request) iter.Seq2[StreamEvent, error]`.
+- `llm.Request` — completion payload: `Model`, `System`, `Messages`, `Tools`, `Temperature`, `MaxTokens`, `Thinking`, `StopReasons`, `CacheRetention`.
+- `llm.Message` — `Role` (User/Assistant/Tool) + `Content []Block`.
+- `llm.Block` — sealed sum: `TextBlock`, `ToolCallBlock`, `ToolResultBlock`, `ThinkingBlock`, `ImageBlock`, `VideoBlock`.
+- `llm.StreamEvent` — sealed sum: `EventMessageStart`, `EventTextStart`, `EventTextDelta`, `EventTextEnd`, `EventThinkingStart`, `EventThinkingDelta`, `EventThinkingEnd`, `EventToolCallStart`, `EventToolCallDelta`, `EventToolCallEnd`, `EventMessageEnd`.
+- `llm.Usage` — token accounting incl. per-TTL cache breakdown (Anthropic).
+- `llm.APIError` — wraps non-2xx responses; `Inner` carries the sentinel; `RetryAfter` is the parsed server hint.
+
+## Helpers
+
+- `llm.Complete(ctx, llm.LLM, Request) (*Message, error)` — synchronous one-shot.
+- `llm.Accumulate(seq iter.Seq2[StreamEvent, error]) iter.Seq2[*Message, error]` — fold events into a growing Message.
+- `llm.ComputeCost(usage, model) (Cost, error)` — dollar projection from a Usage record; seed pricing table for Claude 4 / GPT-5 / Gemini 2.5+3.1; override via `RegisterPricing`.
+- `llm.RetryPolicy` + `Options.Retry` on every provider — exponential backoff + full jitter; honors Retry-After; retries only the initial HTTP attempt (no mid-stream replay).
+- `llm.IsRateLimited`, `llm.IsOverloaded`, `llm.IsServerError`, `llm.IsContextLength`, `llm.IsPolicyViolation`, `llm.IsRetriable` — error-classification sugar.
+
+## Providers
+
+- `providers/anthropic` — Anthropic Messages API. Constants: `ClaudeOpus4_7`, `ClaudeSonnet4_6`, `ClaudeHaiku4_5`. Implements `llm.TokenCounter`. Supports prompt caching (5m + 1h tiers via `CacheRetention=Short|Long`).
+- `providers/openai` — OpenAI-compatible Chat Completions. Constants: `GPT5_5`, `GPT5_4`, `GPT5_4Mini`, `GPT5_4Nano`. Works with Azure OpenAI, Groq, Together, vLLM, OpenRouter, Ollama via `Options.BaseURL` / `Options.URL` / `Options.Headers`.
+- `providers/openai_responses` — OpenAI Responses API (`/v1/responses`). GPT-5 server-side state, reasoning summaries (mapped to `ThinkingBlock`), built-in tool primitives.
+- `providers/gemini` — Google Gemini (Generative Language API). Constants: `Gemini3_1Pro`, `Gemini2_5Pro`, `Gemini2_5Flash`, `Gemini2_5FlashLite`. Implements `llm.TokenCounter`. Native `VideoBlock` input.
+- `providers/gemini/files` — Files API helper for >20 MB inputs (Upload / Wait / Get / Delete).
+
+## Companion library
+
+- [pi-agent-go](https://github.com/amit-timalsina/pi-agent-go) — single-loop agent on top of pi-llm-go. Use when you want a tool-calling loop without writing one.
+
+## Common usage patterns
+
+### One-shot Claude completion
+
+```go
+import (
+    llm "github.com/amit-timalsina/pi-llm-go"
+    "github.com/amit-timalsina/pi-llm-go/providers/anthropic"
+)
+p, _ := anthropic.New(anthropic.Options{APIKey: key})
+msg, _ := llm.Complete(ctx, p, llm.Request{
+    Model: anthropic.ClaudeSonnet4_6, MaxTokens: 1024,
+    Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+})
+```
+
+### Streaming text
+
+```go
+for event, err := range p.Stream(ctx, req) {
+    if err != nil { return err }
+    if d, ok := event.(llm.EventTextDelta); ok {
+        fmt.Print(d.Delta)
+    }
+}
+```
+
+### Tool calling round-trip (one tool call)
+
+```go
+req := llm.Request{
+    Model: anthropic.ClaudeSonnet4_6, MaxTokens: 1024,
+    Tools: []llm.Tool{{Name: "get_weather", Description: "...", InputSchema: schemaJSON}},
+    Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "weather in Tokyo?"}}}},
+}
+msg, _ := llm.Complete(ctx, p, req)
+for _, b := range msg.Content {
+    if tc, ok := b.(llm.ToolCallBlock); ok {
+        result := executeTool(tc.Name, tc.Arguments)
+        req.Messages = append(req.Messages, *msg, llm.Message{
+            Role: llm.RoleUser,
+            Content: []llm.Block{llm.ToolResultBlock{ToolCallID: tc.ID, Content: result}},
+        })
+        // next p.Stream(ctx, req) gets the model's final answer
+    }
+}
+```
+
+### Prompt caching
+
+```go
+req.CacheRetention = llm.CacheRetentionLong  // 1h TTL on Anthropic
+// pi-llm-go auto-places cache_control markers on the last system block,
+// the final tool, and the last user message block. Anthropic-only;
+// OpenAI / Gemini ignore this field (their cache is automatic).
+
+msg, _ := llm.Complete(ctx, p, req)
+fmt.Printf("cache_read=%d cache_write_1h=%d\n", msg.Usage.CacheReadTokens, msg.Usage.CacheWrite1hTokens)
+```
+
+### Pre-flight token counting
+
+```go
+if counter, ok := p.(llm.TokenCounter); ok {
+    n, _ := counter.CountTokens(ctx, req)
+    fmt.Printf("would consume %d input tokens\n", n)
+}
+// Anthropic + Gemini implement TokenCounter. OpenAI does not (tiktoken not bundled).
+```
+
+### Cost projection
+
+```go
+cost, _ := llm.ComputeCost(msg.Usage, anthropic.ClaudeSonnet4_6)
+fmt.Printf("$%.4f (in=$%.4f out=$%.4f cache_1h=$%.4f)\n",
+    cost.Total(), cost.Input, cost.Output, cost.CacheWrite1h)
+```
+
+### Retry middleware
+
+```go
+p, _ := anthropic.New(anthropic.Options{
+    APIKey: key,
+    Retry:  &llm.RetryPolicy{MaxAttempts: 4, BaseDelay: time.Second, MaxDelay: 30 * time.Second},
+})
+// Retries 429 / 529 / 5xx / net.Error with exponential backoff + full
+// jitter; honors Retry-After. Only the initial HTTP attempt is retried
+// (mid-stream connection breaks terminate the iterator).
+```
+
+### Error handling
+
+```go
+for ev, err := range p.Stream(ctx, req) {
+    if err == nil { /* consume */ continue }
+    switch {
+    case llm.IsRateLimited(err):       // 429 — respect APIError.RetryAfter
+    case llm.IsOverloaded(err):        // 529 — short backoff, consider provider fallback
+    case llm.IsServerError(err):       // other 5xx — retry, escalate if sustained
+    case llm.IsContextLength(err):     // 400, prompt too long — truncate or route to longer-context model
+    case llm.IsPolicyViolation(err):   // 400, safety/policy — do not retry
+    case errors.Is(err, llm.ErrAuth):  // 401, 403 — caller bug
+    }
+    return err
+}
+```
+
+## Examples directory
+
+- [examples/streaming](examples/streaming) — basic streaming Claude completion.
+- [examples/tool_calling](examples/tool_calling) — hand-rolled tool-call loop.
+- [examples/multimodal](examples/multimodal) — image input on Anthropic + OpenAI.
+- [examples/multimodal_gemini](examples/multimodal_gemini) — text + image + video on Gemini; `--video-upload PATH` exercises the Files API.
+- [examples/prompt_caching](examples/prompt_caching) — `CacheRetention` knob.
+- [examples/thinking](examples/thinking) — extended thinking on Anthropic.
+- [examples/openai_responses](examples/openai_responses) — OpenAI Responses API + reasoning summaries.
+- [examples/azure_openai](examples/azure_openai) — Azure OpenAI through the OpenAI Chat provider.
+- [examples/multi_turn](examples/multi_turn) — multi-turn conversation state.
+
+## Versioning and stability
+
+Pre-1.0 (v0.x). API may change between minor versions; every change documented in CHANGELOG.md. v1.0 lands when the API has been used in production for ≥4 weeks without churn + at least one external Go reviewer has signed off on the public surface. Used internally at Noumenal as of May 2026 — that's the consumer-adoption signal driving v1.0 timing.
+
+## License
+
+MIT. Attribution to upstream `pi-ai` (Mario Zechner, MIT) in LICENSE and README.
+
+## Links
+
+- pkg.go.dev: https://pkg.go.dev/github.com/amit-timalsina/pi-llm-go
+- CHANGELOG: [CHANGELOG.md](CHANGELOG.md)
+- ROADMAP: [ROADMAP.md](ROADMAP.md)
+- Companion agent loop: [pi-agent-go](https://github.com/amit-timalsina/pi-agent-go)

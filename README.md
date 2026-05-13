@@ -5,23 +5,35 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/amit-timalsina/pi-llm-go)](https://goreportcard.com/report/github.com/amit-timalsina/pi-llm-go)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A minimal, Go-native LLM adapter with streaming, tool calling, and extended thinking. Provider-agnostic interface with built-in support for **Anthropic Messages**, **OpenAI Chat Completions** (covering OpenAI, Azure OpenAI, Groq, Together, vLLM, OpenRouter, Ollama), and the **OpenAI Responses API** (GPT-5-family server-side state + reasoning summaries).
+**Minimal, provider-agnostic LLM client for Go.** Streaming completions, tool calling, prompt caching, token counting, cost projection, and retry middleware for **Anthropic Claude** (Messages API), **OpenAI** (Chat Completions + Responses API, including GPT-5 family), **Google Gemini** (text / image / video), and any **OpenAI-compatible** endpoint (Azure OpenAI, Groq, Together, vLLM, OpenRouter, Ollama). Idiomatic Go: `iter.Seq2` streaming, sealed sum types, `errors.Is` sentinels, `context.Context` cancellation.
 
-> Status: **v0.x — pre-1.0**. API may change between minor versions; see [CHANGELOG.md](CHANGELOG.md).
+> Status: **v0.9.0, pre-1.0.** API may change between minor versions; see [CHANGELOG.md](CHANGELOG.md). Used internally at [Noumenal](https://noumenalai.com).
 
-## Why
-
-The Go LLM library landscape forces you to pick between heavy vendor SDKs that don't compose, code-generated client surfaces that don't track new providers, or "framework" libraries that ship more concepts than you want. `pi-llm-go` is the opposite: ~1.5kLoc of plain Go that gives you an interface, two providers, and a streaming model that uses `iter.Seq2` like a normal iterator. No HTTP wrappers, no model registries, no provider-specific magic.
-
-## Installation
+## Install
 
 ```bash
 go get github.com/amit-timalsina/pi-llm-go
 ```
 
-Requires Go 1.23 or later (for `iter.Seq2`).
+Requires Go 1.23+ (for `iter.Seq2`).
 
-## Quickstart
+## Capability matrix
+
+| Capability | Anthropic | OpenAI Chat | OpenAI Responses | Gemini |
+|---|---|---|---|---|
+| Streaming text | ✅ | ✅ | ✅ | ✅ |
+| Tool calling | ✅ | ✅ | ✅ | ✅ |
+| Image input | ✅ | ✅ | ✅ | ✅ |
+| Video input | reject at wire | reject at wire | reject at wire | ✅ native |
+| Extended thinking | ✅ | — | ✅ (reasoning summaries) | ✅ |
+| Prompt caching (5m + 1h tier) | ✅ | automatic | automatic | single-TTL |
+| Per-TTL cache-write Usage breakdown | ✅ | — | — | — |
+| `CountTokens` (no-spend pre-flight) | ✅ | — (no API) | — (no API) | ✅ |
+| Cost projection helper | ✅ | ✅ | ✅ | ✅ |
+| Retry middleware (`Options.Retry`) | ✅ | ✅ | ✅ | ✅ |
+| Files API helper (>20 MB inputs) | — | — | — | ✅ |
+
+## Quickstart — one-shot Claude
 
 ```go
 package main
@@ -42,7 +54,7 @@ func main() {
         Model:     anthropic.ClaudeSonnet4_6,
         MaxTokens: 1024,
         Messages: []llm.Message{
-            {Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hello"}}},
+            {Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "Reply with one word: hello"}}},
         },
     })
     if err != nil { panic(err) }
@@ -55,16 +67,55 @@ func main() {
 }
 ```
 
-Streaming is `iter.Seq2[llm.StreamEvent, error]` — range over it:
+## Quickstart — streaming with `iter.Seq2`
 
 ```go
 for event, err := range p.Stream(ctx, req) {
-    if err != nil { /* handle */ }
+    if err != nil { /* handle */ break }
     if d, ok := event.(llm.EventTextDelta); ok {
         fmt.Print(d.Delta)
     }
 }
 ```
+
+`Stream` returns `iter.Seq2[llm.StreamEvent, error]`. `Complete` is a synchronous helper that drains the stream and returns the final assistant `Message`.
+
+## Quickstart — tool calling
+
+```go
+req := llm.Request{
+    Model:     anthropic.ClaudeSonnet4_6,
+    MaxTokens: 1024,
+    Tools: []llm.Tool{{
+        Name:        "get_weather",
+        Description: "Get the weather for a city",
+        InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`),
+    }},
+    Messages: []llm.Message{
+        {Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "What's the weather in Tokyo?"}}},
+    },
+}
+msg, _ := llm.Complete(ctx, p, req)
+for _, b := range msg.Content {
+    if tc, ok := b.(llm.ToolCallBlock); ok {
+        fmt.Printf("tool=%s args=%s\n", tc.Name, tc.Arguments)
+        // Execute the tool yourself, then send a ToolResultBlock on the next turn.
+        // For a built-in execution loop, use https://github.com/amit-timalsina/pi-agent-go
+    }
+}
+```
+
+## When to pick `pi-llm-go`
+
+| You want | Pick |
+|---|---|
+| One Go interface across Anthropic / OpenAI / Gemini, streaming-first | **pi-llm-go** |
+| Only OpenAI, no streaming abstraction needed | [sashabaranov/go-openai](https://github.com/sashabaranov/go-openai) |
+| Only Anthropic, vendor SDK guarantees | [anthropics/anthropic-sdk-go](https://github.com/anthropics/anthropic-sdk-go) |
+| A heavyweight framework with chains, agents, memory, embeddings, vector stores | [tmc/langchaingo](https://github.com/tmc/langchaingo) |
+| Built-in agent loop on top of a provider-agnostic LLM client | **pi-llm-go + [pi-agent-go](https://github.com/amit-timalsina/pi-agent-go)** |
+
+`pi-llm-go` is the **streaming-completions** layer. ~1.5kLoC of plain Go: one interface, four providers, no model registries, no plugin systems, no abstractions beyond what the LLM wire format demands.
 
 ## Features
 
