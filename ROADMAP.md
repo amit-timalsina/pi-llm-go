@@ -7,6 +7,14 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v0.9.0** shipped 2026-05-13 — Retry middleware (`llm.RetryPolicy`,
+  `Options.Retry` on every provider, `llm.RunWithRetry[T]` exported)
+  + finer 4xx sentinels (`ErrContextLength`, `ErrPolicyViolation`)
+  detected by body-pattern matching. v0.6.0's categorical errors +
+  `RetryAfter` surfacing are now backed by a first-party retry loop.
+- **v0.8.1** shipped 2026-05-13 — Fix Gemini `CountTokens` wire shape
+  (`generateContentRequest` wrapper required for system + tools to
+  contribute to count). Live-smoke regression catch.
 - **v0.8.0** shipped 2026-05-13 — `TokenCounter` interface (Anthropic +
   Gemini, against their dedicated count endpoints) + first-party
   `Cost` / `Pricing` / `ComputeCost` helpers with a hand-curated seed
@@ -38,16 +46,11 @@ Reordering happens when reality changes.
 
 ## Near-term (next 1–3 minor releases)
 
-### v0.9.0 — retry middleware + finer-grained errors
+### Open near-term slots
 
-- Provider-side retry on rate limits + 5xx (configurable base/max
-  delay; default off; opt-in via `Options.Retry`). v0.6.0 surfaced
-  the categorical signals + `RetryAfter`; this turns them into a
-  one-liner default policy.
-- More granular error sentinels: `ErrContextLength`,
-  `ErrPolicyViolation`, `ErrContentFilter`. (`ErrOverloaded` already
-  shipped in v0.6.0.) Currently the remainder collapse into
-  `ErrInvalidRequest`, forcing callers to string-match.
+(v0.9.0 closed the retry + finer-errors slot. Next near-term candidates
+are driven by consumer asks. Highest signal: a real Go consumer
+review of the public API before tagging v1.0.)
 
 ## Mid-term
 
