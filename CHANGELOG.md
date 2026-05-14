@@ -6,6 +6,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Anthropic round-trip of empty-thinking blocks**. v0.10.0's
+  `apiBlock.Thinking` had `omitempty`, which elided the field on
+  ThinkingBlocks where the model emitted a signed continuation token
+  but minimal/empty thinking summary text. Anthropic's content-block
+  validator requires the field on type=thinking and returned HTTP 400
+  with path `messages.N.content.M.thinking.thinking: Field required`,
+  breaking any multi-iteration agent run with thinking enabled (live
+  failure: noumenal_product SAIL run 019e2700-..., 2026-05-14).
+  - Fix: added `apiBlock.MarshalJSON` that special-cases the
+    "thinking" type to force the `thinking` field through (even when
+    empty) while preserving omitempty behavior for every other block
+    type — text / tool_use / tool_result / image regress-tested.
+
 ## [0.10.0] - 2026-05-13
 
 Anthropic Opus 4.7 adaptive thinking support. Closes issue #20:
