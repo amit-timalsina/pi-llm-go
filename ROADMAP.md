@@ -7,14 +7,19 @@ Reordering happens when reality changes.
 
 ## Status
 
-- **v0.10.1** shipped 2026-05-14 — Hotfix for v0.10.0's adaptive-
+- **v0.10.2** shipped 2026-05-14 — Republishes v0.10.1's thinking-
+  block fix with internal product identifiers scrubbed from comments
+  + CHANGELOG. v0.10.1 is retracted (Go proxy had cached it before
+  the scrub PR landed). No code-behavior change between v0.10.1 and
+  v0.10.2.
+- **v0.10.1** shipped 2026-05-14 [RETRACTED] — Hotfix for v0.10.0's adaptive-
   thinking rollout: empty-content ThinkingBlocks were elided on
   round-trip via `apiBlock.Thinking`'s `omitempty` tag, which broke
   multi-iteration agent runs (Anthropic rejected with HTTP 400
-  `messages.N.content.M.thinking.thinking: Field required`). Live
-  failure: noumenal_product SAIL run 019e2700-..., 2026-05-14.
-  `apiBlock.MarshalJSON` now special-cases the thinking type to
-  force the field through.
+  `messages.N.content.M.thinking.thinking: Field required`).
+  Reported 2026-05-14 on a multi-iteration Opus 4.7 agent run with
+  adaptive thinking. `apiBlock.MarshalJSON` now special-cases the
+  thinking type to force the field through.
 - **v0.10.0** shipped 2026-05-13 — Anthropic adaptive thinking
   support for Opus 4.7+. New `llm.Effort` enum + `ThinkingConfig.Effort`
   field; provider routes adaptive vs manual wire shapes per the

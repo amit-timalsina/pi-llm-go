@@ -13,8 +13,8 @@ import (
 // signed continuation token must still serialize the `thinking` field.
 // Anthropic's content-block validator returns 400 with path
 // `messages.N.content.M.thinking.thinking: Field required` when the
-// field is absent (live failure: noumenal_product SAIL run
-// 019e2700-..., 2026-05-14).
+// field is absent (reported 2026-05-14 on a multi-iteration Opus
+// 4.7 agent run with adaptive thinking enabled).
 func TestConvertOutgoingBlock_ThinkingEmptyContentKeepsThinkingField(t *testing.T) {
 	b, err := convertOutgoingBlock(llm.ThinkingBlock{Thinking: "", Signature: "sig-continuation-token"})
 	if err != nil {

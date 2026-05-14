@@ -6,7 +6,29 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.10.1] - 2026-05-14
+## [0.10.2] - 2026-05-14
+
+Republishes v0.10.1's thinking-block fix with internal product
+identifiers scrubbed from comments + CHANGELOG. v0.10.1 is retracted
+via `retract` in go.mod. No code-behavior change between v0.10.1
+and v0.10.2.
+
+### Changed
+
+- **Scrubbed internal product identifiers from public docs**. The
+  bug surface + repro context (multi-iteration Opus 4.7 agent runs
+  with adaptive thinking) remains documented; only proprietary
+  identifiers drop.
+
+### Retracted
+
+- v0.10.1 — shipped with internal product identifiers in CHANGELOG +
+  test-file comments that should not appear in this OSS repo. Use
+  v0.10.2 instead.
+
+## [0.10.1] - 2026-05-14 [RETRACTED]
+
+Retracted via `retract v0.10.1` in go.mod — see v0.10.2.
 
 Hotfix for v0.10.0's adaptive-thinking rollout: empty-content
 ThinkingBlocks were elided on round-trip, breaking multi-iteration
@@ -20,8 +42,9 @@ agent runs.
   but minimal/empty thinking summary text. Anthropic's content-block
   validator requires the field on type=thinking and returned HTTP 400
   with path `messages.N.content.M.thinking.thinking: Field required`,
-  breaking any multi-iteration agent run with thinking enabled (live
-  failure: noumenal_product SAIL run 019e2700-..., 2026-05-14).
+  breaking any multi-iteration agent run with thinking enabled
+  (reported 2026-05-14 on a multi-iteration Opus 4.7 agent run with
+  adaptive thinking).
   - Fix: added `apiBlock.MarshalJSON` that special-cases the
     "thinking" type to force the `thinking` field through (even when
     empty) while preserving omitempty behavior for every other block
@@ -65,8 +88,8 @@ dispatch routes to the right wire shape per model family.
   Live-smoke-confirmed: `BudgetTokens=2048` → `"thinking.type.enabled"
   is not supported for this model. Use \"thinking.type.adaptive\" and
   \"output_config.effort\"...`. The new `Effort` path is now the
-  correct surface for Opus 4.7. Original failure: noumenal_product
-  run `019e2260-1032-7c0a-8799-05f2aa5e4881`, 2026-05-13.
+  correct surface for Opus 4.7. Originally reported by an internal
+  consumer 2026-05-13.
 
 ## [0.9.0] - 2026-05-13
 
