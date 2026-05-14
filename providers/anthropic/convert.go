@@ -55,6 +55,14 @@ type apiCacheControl struct {
 // apiBlock is the discriminated-union shape Anthropic accepts in message
 // content. We use a single struct with all possible fields and rely on
 // "omitempty" tags + Type to discriminate.
+//
+// Caveat: the `Thinking string` field uses `omitempty` for tidy
+// serialization of non-thinking blocks (text/tool_use/etc) where the
+// field is N/A. But when Type=="thinking" Anthropic REQUIRES the
+// `thinking` field even when content is the empty string (the model
+// may emit a thinking block whose summarized text is empty — only
+// the signature carries the signed continuation token). MarshalJSON
+// below special-cases the thinking type to force the field through.
 type apiBlock struct {
 	Type string `json:"type"`
 
@@ -83,6 +91,39 @@ type apiBlock struct {
 	// Optional cache breakpoint. Auto-placed by buildRequestBody based on
 	// Request.CacheRetention; callers don't set this directly.
 	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
+}
+
+// MarshalJSON forces the `thinking` field through on blocks of type
+// "thinking" even when its content is empty. Anthropic's content-
+// block validator requires the field on this type (path
+// messages[N].content[M].thinking.thinking → "field required" on
+// HTTP 400) — empty thinking + a signed continuation token is a
+// legitimate shape the model emits, so the field must be present.
+//
+// Default behavior (apiBlock-as-struct via the Alias trick) is
+// preserved for every other Type so the omitempty contract on
+// non-thinking fields is unchanged.
+func (b apiBlock) MarshalJSON() ([]byte, error) {
+	type Alias apiBlock
+	if b.Type == "thinking" {
+		// Parallel struct without omitempty on Thinking so empty
+		// content still serializes as `"thinking":""`. Signature
+		// keeps omitempty (the wire spec permits an absent signature
+		// on assistant-authored thinking blocks; presence is
+		// determined by the streaming source).
+		return json.Marshal(&struct {
+			Type         string           `json:"type"`
+			Thinking     string           `json:"thinking"`
+			Signature    string           `json:"signature,omitempty"`
+			CacheControl *apiCacheControl `json:"cache_control,omitempty"`
+		}{
+			Type:         b.Type,
+			Thinking:     b.Thinking,
+			Signature:    b.Signature,
+			CacheControl: b.CacheControl,
+		})
+	}
+	return json.Marshal(Alias(b))
 }
 
 // apiImageSource is Anthropic's nested image source descriptor.
