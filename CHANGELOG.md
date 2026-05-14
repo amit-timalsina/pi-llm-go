@@ -6,6 +6,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-05-14
+
+Hotfix for v0.10.0's adaptive-thinking rollout: empty-content
+ThinkingBlocks were elided on round-trip, breaking multi-iteration
+agent runs.
+
 ### Fixed
 
 - **Anthropic round-trip of empty-thinking blocks**. v0.10.0's
