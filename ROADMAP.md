@@ -7,6 +7,12 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v0.11.0** shipped 2026-05-20 — Strict tool use (`Tool.Strict`) +
+  `Request.ToolChoice` across all four providers. Closes #26 — the
+  Noumenal Actioning Agent's rule-generator needed enum-constrained
+  controllable-name fields with parenthetical units that
+  non-strict-mode models strip ~100% of the time. Live-smoked
+  against Anthropic + Azure OpenAI (Chat + Responses).
 - **v0.10.2** shipped 2026-05-14 — Republishes v0.10.1's thinking-
   block fix with internal product identifiers scrubbed from comments
   + CHANGELOG. v0.10.1 is retracted (Go proxy had cached it before
