@@ -72,8 +72,16 @@ func TestTool_StrictFalseOmittedFromWire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if strings.Contains(string(fs.lastBody), `"strict"`) {
-		t.Errorf("strict field leaked into body when not set: %s", fs.lastBody)
+	// Structured check — `"strict"` could legally appear in a schema.
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	tools, _ := body["tools"].([]any)
+	if len(tools) > 0 {
+		tool := tools[0].(map[string]any)
+		fn, _ := tool["function"].(map[string]any)
+		if _, present := fn["strict"]; present {
+			t.Errorf("function.strict leaked when Tool.Strict was false: %v", fn)
+		}
 	}
 }
 

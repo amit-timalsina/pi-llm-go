@@ -16,8 +16,8 @@
 // hallucinates near-misses; with strict mode it cannot emit an out-of-
 // schema token.
 //
-//   export ANTHROPIC_API_KEY=...
-//   go run ./examples/strict_tool_use
+//	export ANTHROPIC_API_KEY=...
+//	go run ./examples/strict_tool_use
 package main
 
 import (

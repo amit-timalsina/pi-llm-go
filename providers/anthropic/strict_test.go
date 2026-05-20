@@ -70,8 +70,15 @@ func TestTool_StrictFalseOmittedFromWire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if strings.Contains(string(fs.lastBody), `"strict"`) {
-		t.Errorf("strict field leaked into body when not set: %s", fs.lastBody)
+	// Decode and inspect the actual tool object rather than substring-
+	// matching: a JSON Schema could in principle contain "strict" too.
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	tools, _ := body["tools"].([]any)
+	if len(tools) > 0 {
+		if _, present := tools[0].(map[string]any)["strict"]; present {
+			t.Errorf("strict leaked into Anthropic tool object when not set: %v", tools[0])
+		}
 	}
 }
 

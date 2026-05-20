@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	llm "github.com/amit-timalsina/pi-llm-go"
@@ -101,7 +100,16 @@ func TestTool_StrictIgnoredOnGemini(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if strings.Contains(string(fs.lastBody), `"strict"`) {
-		t.Errorf("strict field leaked into Gemini body: %s", fs.lastBody)
+	// Structured check.
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	tools, _ := body["tools"].([]any)
+	for _, t0 := range tools {
+		decls, _ := t0.(map[string]any)["functionDeclarations"].([]any)
+		for _, d := range decls {
+			if _, present := d.(map[string]any)["strict"]; present {
+				t.Errorf("strict leaked into Gemini function declaration: %v", d)
+			}
+		}
 	}
 }

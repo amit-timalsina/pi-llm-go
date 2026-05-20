@@ -59,7 +59,11 @@ type Tool struct {
 //     (same wire shape).
 //   - Gemini: forwarded as `tool_config.function_calling_config` with
 //     `mode` mapping: `Auto`→AUTO, `Any`→ANY, `None`→NONE; `Tool`
-//     becomes ANY with `allowed_function_names: [Name]`.
+//     becomes ANY with `allowed_function_names: [Name]`. The allowlist
+//     constrains the model exclusively — even if Tools declares N
+//     other functions, the model can only emit a call to `Name`.
+//     Semantically stronger than Anthropic's `tool` mode (the model
+//     may also choose not to call any tool there).
 type ToolChoice struct {
 	// Type controls the choice mode. Must be one of the ToolChoice*
 	// constants; the provider rejects unknown values at request build
