@@ -29,6 +29,7 @@ type requestBody struct {
 	System        any                `json:"system,omitempty"`
 	Messages      []apiMessage       `json:"messages"`
 	Tools         []apiTool          `json:"tools,omitempty"`
+	ToolChoice    *apiToolChoice     `json:"tool_choice,omitempty"`
 	Temperature   *float64           `json:"temperature,omitempty"`
 	StopSequences []string           `json:"stop_sequences,omitempty"`
 	Thinking      *apiThinkingConfig `json:"thinking,omitempty"`
@@ -38,6 +39,37 @@ type requestBody struct {
 	// the legacy budget_tokens path that lives inside thinking.
 	OutputConfig *apiOutputConfig `json:"output_config,omitempty"`
 	Stream       bool             `json:"stream"`
+}
+
+// apiToolChoice is the Anthropic on-wire shape for the tool_choice
+// field. Type is the discriminator ("auto" | "any" | "tool" | "none");
+// Name is required when Type == "tool". Anthropic's wire keywords
+// match pi-llm-go's ToolChoiceType values exactly so the mapping is
+// a one-line conversion (unlike OpenAI which renames `any`→`required`).
+type apiToolChoice struct {
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
+}
+
+// toAPIToolChoice maps llm.ToolChoice to Anthropic's wire shape. Returns
+// nil for nil input. Returns an error when Type is unrecognized or when
+// Type=Tool is set without a Name (validate at request-build time
+// rather than letting Anthropic reject with a 400).
+func toAPIToolChoice(t *llm.ToolChoice) (*apiToolChoice, error) {
+	if t == nil {
+		return nil, nil
+	}
+	switch t.Type {
+	case llm.ToolChoiceAuto, llm.ToolChoiceAny, llm.ToolChoiceNone:
+		return &apiToolChoice{Type: string(t.Type)}, nil
+	case llm.ToolChoiceTool:
+		if t.Name == "" {
+			return nil, fmt.Errorf("tool_choice: Type=Tool requires Name")
+		}
+		return &apiToolChoice{Type: "tool", Name: t.Name}, nil
+	default:
+		return nil, fmt.Errorf("tool_choice: unknown Type %q", t.Type)
+	}
 }
 
 type apiMessage struct {
@@ -140,6 +172,10 @@ type apiTool struct {
 	Description  string           `json:"description,omitempty"`
 	InputSchema  json.RawMessage  `json:"input_schema"`
 	CacheControl *apiCacheControl `json:"cache_control,omitempty"`
+	// Strict opts the tool into grammar-constrained sampling. Top-level
+	// peer of name/description/input_schema per Anthropic's wire
+	// contract. omitempty so non-strict tools don't emit `"strict":false`.
+	Strict bool `json:"strict,omitempty"`
 }
 
 // apiThinkingConfig is the on-wire shape for the `thinking` field.
@@ -239,11 +275,18 @@ func buildRequestBody(req llm.Request) (io.Reader, []string, error) {
 
 	body.Thinking, body.OutputConfig = applyThinkingConfig(req.Thinking)
 
+	tc, err := toAPIToolChoice(req.ToolChoice)
+	if err != nil {
+		return nil, nil, err
+	}
+	body.ToolChoice = tc
+
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, apiTool{
 			Name:        t.Name,
 			Description: t.Description,
 			InputSchema: t.InputSchema,
+			Strict:      t.Strict,
 		})
 	}
 	if marker != nil && len(body.Tools) > 0 {

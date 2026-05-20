@@ -37,6 +37,7 @@ type generateContentForCount struct {
 	Contents          []apiContent      `json:"contents"`
 	SystemInstruction *apiSystem        `json:"systemInstruction,omitempty"`
 	Tools             []apiTool         `json:"tools,omitempty"`
+	ToolConfig        *apiToolConfig    `json:"toolConfig,omitempty"`
 	GenerationConfig  *generationConfig `json:"generationConfig,omitempty"`
 }
 
@@ -147,6 +148,12 @@ func buildCountInnerBody(req llm.Request) (*generateContentForCount, error) {
 		}
 		out.Tools = []apiTool{{FunctionDeclarations: decls}}
 	}
+
+	tc, err := toAPIToolConfig(req.ToolChoice)
+	if err != nil {
+		return nil, fmt.Errorf("count_tokens: %w", err)
+	}
+	out.ToolConfig = tc
 
 	// Pre-walk to build a tool-call-id -> function-name index. Same
 	// pattern as buildRequestBody (see its comment for rationale).

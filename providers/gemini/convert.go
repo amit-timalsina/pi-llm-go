@@ -17,7 +17,58 @@ type requestBody struct {
 	Contents          []apiContent      `json:"contents"`
 	SystemInstruction *apiSystem        `json:"systemInstruction,omitempty"`
 	Tools             []apiTool         `json:"tools,omitempty"`
+	ToolConfig        *apiToolConfig    `json:"toolConfig,omitempty"`
 	GenerationConfig  *generationConfig `json:"generationConfig,omitempty"`
+}
+
+// apiToolConfig is Gemini's top-level tool_choice analog. function_calling_config
+// holds the mode enum (AUTO / ANY / NONE) plus an optional allowedFunctionNames
+// list — used by the ANY mode to constrain which tool the model can pick. For
+// the "force a specific tool by name" case we emit ANY + a single-element
+// allowedFunctionNames list (Gemini has no TOOL-singular mode like Anthropic).
+type apiToolConfig struct {
+	FunctionCallingConfig apiFunctionCallingConfig `json:"functionCallingConfig"`
+}
+
+type apiFunctionCallingConfig struct {
+	Mode                 string   `json:"mode"`
+	AllowedFunctionNames []string `json:"allowedFunctionNames,omitempty"`
+}
+
+// toAPIToolConfig maps llm.ToolChoice to Gemini's tool_config shape.
+//
+// Keyword mapping:
+//
+//	llm.ToolChoiceAuto → mode=AUTO        (Gemini default)
+//	llm.ToolChoiceAny  → mode=ANY         (must call some tool)
+//	llm.ToolChoiceNone → mode=NONE        (disable tools for this turn)
+//	llm.ToolChoiceTool → mode=ANY + allowedFunctionNames=[Name]
+//	                     (Gemini has no dedicated "force this exact tool"
+//	                      mode; the closest semantic is ANY with a 1-element
+//	                      allowlist, which prevents the model from picking
+//	                      any other tool).
+func toAPIToolConfig(t *llm.ToolChoice) (*apiToolConfig, error) {
+	if t == nil {
+		return nil, nil
+	}
+	switch t.Type {
+	case llm.ToolChoiceAuto:
+		return &apiToolConfig{FunctionCallingConfig: apiFunctionCallingConfig{Mode: "AUTO"}}, nil
+	case llm.ToolChoiceAny:
+		return &apiToolConfig{FunctionCallingConfig: apiFunctionCallingConfig{Mode: "ANY"}}, nil
+	case llm.ToolChoiceNone:
+		return &apiToolConfig{FunctionCallingConfig: apiFunctionCallingConfig{Mode: "NONE"}}, nil
+	case llm.ToolChoiceTool:
+		if t.Name == "" {
+			return nil, fmt.Errorf("tool_choice: Type=Tool requires Name")
+		}
+		return &apiToolConfig{FunctionCallingConfig: apiFunctionCallingConfig{
+			Mode:                 "ANY",
+			AllowedFunctionNames: []string{t.Name},
+		}}, nil
+	default:
+		return nil, fmt.Errorf("tool_choice: unknown Type %q", t.Type)
+	}
 }
 
 // apiContent is one turn on the wire. Role is "user" or "model" — Gemini
@@ -164,6 +215,12 @@ func buildRequestBody(req llm.Request) (io.Reader, error) {
 		}
 		body.Tools = []apiTool{{FunctionDeclarations: decls}}
 	}
+
+	tc, err := toAPIToolConfig(req.ToolChoice)
+	if err != nil {
+		return nil, err
+	}
+	body.ToolConfig = tc
 
 	// Pre-walk to build a tool-call-id -> function-name index. Gemini's
 	// functionResponse.name MUST be the function name (matching the

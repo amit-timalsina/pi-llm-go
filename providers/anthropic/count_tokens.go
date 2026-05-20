@@ -18,14 +18,19 @@ import (
 // don't create a breakpoint, so omitting them keeps the body lean and
 // avoids needing to attach the extended-cache-ttl beta header.
 //
-// Forward-compat note: if Request grows tool_choice / parallel_tool_use
-// fields, mirror them here — they DO affect input token counts because
-// Anthropic's tool-use system prompt varies by tool_choice setting.
+// ToolChoice is mirrored here for accurate counts — Anthropic's
+// tool-use system prompt varies by tool_choice setting (the prepended
+// instructions for "any" / "tool" differ from "auto"), so omitting it
+// from the count_tokens body would under-count any caller that uses
+// ToolChoice on the matching Stream call. Tool.Strict similarly
+// affects the prompt because Anthropic compiles per-tool grammars
+// and prefaces the system prompt accordingly.
 type countTokensRequestBody struct {
 	Model        string             `json:"model"`
 	System       string             `json:"system,omitempty"`
 	Messages     []apiMessage       `json:"messages"`
 	Tools        []apiTool          `json:"tools,omitempty"`
+	ToolChoice   *apiToolChoice     `json:"tool_choice,omitempty"`
 	Thinking     *apiThinkingConfig `json:"thinking,omitempty"`
 	OutputConfig *apiOutputConfig   `json:"output_config,omitempty"`
 }
@@ -57,11 +62,17 @@ func (p *Provider) doCountTokens(ctx context.Context, req llm.Request) (int, err
 		System: req.System,
 	}
 	body.Thinking, body.OutputConfig = applyThinkingConfig(req.Thinking)
+	tc, err := toAPIToolChoice(req.ToolChoice)
+	if err != nil {
+		return 0, fmt.Errorf("anthropic count_tokens: %w", err)
+	}
+	body.ToolChoice = tc
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, apiTool{
 			Name:        t.Name,
 			Description: t.Description,
 			InputSchema: t.InputSchema,
+			Strict:      t.Strict,
 		})
 	}
 	for _, m := range req.Messages {
