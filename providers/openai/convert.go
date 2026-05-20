@@ -21,11 +21,57 @@ type requestBody struct {
 	Model               string         `json:"model"`
 	Messages            []apiMessage   `json:"messages"`
 	Tools               []apiTool      `json:"tools,omitempty"`
+	ToolChoice          any            `json:"tool_choice,omitempty"`
 	Stream              bool           `json:"stream"`
 	StreamOptions       *streamOptions `json:"stream_options,omitempty"`
 	Temperature         *float64       `json:"temperature,omitempty"`
 	MaxCompletionTokens int            `json:"max_completion_tokens,omitempty"`
 	Stop                []string       `json:"stop,omitempty"`
+}
+
+// apiToolChoiceFunc is the object shape OpenAI uses when forcing a
+// specific named function: {"type":"function","function":{"name":"..."}}.
+// The simple string forms ("auto" / "required" / "none") serialize as
+// bare strings on the requestBody.ToolChoice `any` field.
+type apiToolChoiceFunc struct {
+	Type     string `json:"type"` // always "function"
+	Function struct {
+		Name string `json:"name"`
+	} `json:"function"`
+}
+
+// toAPIToolChoice maps llm.ToolChoice to OpenAI's wire shape. Returns
+// nil when t is nil (preserves the provider default), a bare string
+// for auto/required/none, or an apiToolChoiceFunc for the named-tool
+// case.
+//
+// Keyword mapping vs pi-llm-go's neutral enum:
+//
+//	llm.ToolChoiceAuto → "auto"
+//	llm.ToolChoiceAny  → "required"   (OpenAI renames it)
+//	llm.ToolChoiceNone → "none"
+//	llm.ToolChoiceTool → {"type":"function","function":{"name":<Name>}}
+func toAPIToolChoice(t *llm.ToolChoice) (any, error) {
+	if t == nil {
+		return nil, nil
+	}
+	switch t.Type {
+	case llm.ToolChoiceAuto:
+		return "auto", nil
+	case llm.ToolChoiceAny:
+		return "required", nil
+	case llm.ToolChoiceNone:
+		return "none", nil
+	case llm.ToolChoiceTool:
+		if t.Name == "" {
+			return nil, fmt.Errorf("tool_choice: Type=Tool requires Name")
+		}
+		out := apiToolChoiceFunc{Type: "function"}
+		out.Function.Name = t.Name
+		return out, nil
+	default:
+		return nil, fmt.Errorf("tool_choice: unknown Type %q", t.Type)
+	}
 }
 
 // streamOptions opts into the usage block at the tail of the stream.
@@ -100,6 +146,11 @@ type apiTool struct {
 		Name        string          `json:"name"`
 		Description string          `json:"description,omitempty"`
 		Parameters  json.RawMessage `json:"parameters"`
+		// Strict opts the tool into grammar-constrained sampling. Lives
+		// inside the `function` object on the OpenAI wire (peer of
+		// name/description/parameters). omitempty so non-strict tools
+		// don't emit `"strict":false`.
+		Strict bool `json:"strict,omitempty"`
 	} `json:"function"`
 }
 
@@ -128,8 +179,15 @@ func buildRequestBody(req llm.Request) (io.Reader, error) {
 		at.Function.Name = t.Name
 		at.Function.Description = t.Description
 		at.Function.Parameters = t.InputSchema
+		at.Function.Strict = t.Strict
 		body.Tools = append(body.Tools, at)
 	}
+
+	tc, err := toAPIToolChoice(req.ToolChoice)
+	if err != nil {
+		return nil, err
+	}
+	body.ToolChoice = tc
 
 	for _, m := range req.Messages {
 		msgs, err := convertOutgoingMessage(m)

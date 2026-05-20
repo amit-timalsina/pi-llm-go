@@ -18,11 +18,50 @@ type requestBody struct {
 	Input        []inputItem    `json:"input"`
 	Instructions string         `json:"instructions,omitempty"`
 	Tools        []apiTool      `json:"tools,omitempty"`
+	ToolChoice   any            `json:"tool_choice,omitempty"`
 	Stream       bool           `json:"stream"`
 	Reasoning    *reasoningOpts `json:"reasoning,omitempty"`
 	Temperature  *float64       `json:"temperature,omitempty"`
 	MaxOutput    int            `json:"max_output_tokens,omitempty"`
 	Include      []string       `json:"include,omitempty"`
+}
+
+// apiToolChoiceFunc is the Responses-API object shape for forcing a
+// specific function. NOTE: flatter than Chat Completions — no nested
+// "function" wrapper. The Responses API uses `{"type":"function","name":"..."}`
+// directly. The simple string forms ("auto" / "required" / "none")
+// serialize as bare strings on the requestBody.ToolChoice `any` field.
+type apiToolChoiceFunc struct {
+	Type string `json:"type"` // always "function"
+	Name string `json:"name"`
+}
+
+// toAPIToolChoice maps llm.ToolChoice to the Responses-API wire shape.
+// Keyword mapping (same as Chat Completions):
+//
+//	llm.ToolChoiceAuto → "auto"
+//	llm.ToolChoiceAny  → "required"
+//	llm.ToolChoiceNone → "none"
+//	llm.ToolChoiceTool → {"type":"function","name":<Name>}  (flatter than Chat)
+func toAPIToolChoice(t *llm.ToolChoice) (any, error) {
+	if t == nil {
+		return nil, nil
+	}
+	switch t.Type {
+	case llm.ToolChoiceAuto:
+		return "auto", nil
+	case llm.ToolChoiceAny:
+		return "required", nil
+	case llm.ToolChoiceNone:
+		return "none", nil
+	case llm.ToolChoiceTool:
+		if t.Name == "" {
+			return nil, fmt.Errorf("tool_choice: Type=Tool requires Name")
+		}
+		return apiToolChoiceFunc{Type: "function", Name: t.Name}, nil
+	default:
+		return nil, fmt.Errorf("tool_choice: unknown Type %q", t.Type)
+	}
 }
 
 type reasoningOpts struct {
@@ -57,6 +96,11 @@ type apiTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters"`
+	// Strict opts the tool into grammar-constrained sampling. Top-level
+	// peer of name/description/parameters on the Responses API (flatter
+	// than Chat Completions, which nests under `function`). omitempty
+	// so non-strict tools don't emit `"strict":false`.
+	Strict bool `json:"strict,omitempty"`
 }
 
 // buildRequestBody serializes a llm.Request into Responses API format.
@@ -86,8 +130,15 @@ func buildRequestBody(req llm.Request, effort ReasoningEffort, includeReasoningS
 			Name:        t.Name,
 			Description: t.Description,
 			Parameters:  t.InputSchema,
+			Strict:      t.Strict,
 		})
 	}
+
+	tc, err := toAPIToolChoice(req.ToolChoice)
+	if err != nil {
+		return nil, err
+	}
+	body.ToolChoice = tc
 
 	for _, m := range req.Messages {
 		items, err := convertOutgoingMessage(m)

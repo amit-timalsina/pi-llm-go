@@ -53,6 +53,13 @@ type Request struct {
 	Thinking    *ThinkingConfig
 	StopReasons []string
 
+	// ToolChoice controls whether and which tool the model must call
+	// on this turn. nil preserves the provider's default behavior
+	// (auto when Tools is non-empty, none otherwise). See the
+	// ToolChoice godoc for per-provider wire mapping and the
+	// Anthropic extended-thinking incompatibility caveat.
+	ToolChoice *ToolChoice
+
 	// CacheRetention controls Anthropic prompt-cache breakpoint placement.
 	// When unset or "none", no cache markers are emitted. When "short" or
 	// "long", the Anthropic provider auto-places ephemeral cache_control

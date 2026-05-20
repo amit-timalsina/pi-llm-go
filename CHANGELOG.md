@@ -6,6 +6,47 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Strict tool use** (`Tool.Strict bool`) — opts a tool into
+  grammar-constrained sampling. The model's token sampler is
+  constrained to schema-valid tokens, so the emitted input is
+  guaranteed to match `InputSchema` (no app-side validate-and-retry
+  loop). Closes #26.
+  - Anthropic Messages: serialized as top-level `strict` on the tool
+    definition (peer of name/description/input_schema). Mirrored on
+    `count_tokens` so input-token counts stay accurate.
+  - OpenAI Chat Completions: serialized as `function.strict` (nested
+    under the function object).
+  - OpenAI Responses API: top-level `strict` on the function tool
+    (flatter Responses wire shape).
+  - Gemini: silently ignored (no per-tool strict equivalent; Gemini
+    uses `response_schema` for a different surface).
+  - `omitempty` on the wire field — non-strict tools emit no `strict`
+    key, keeping the body lean and cross-host-compatible.
+- **`Request.ToolChoice`** — controls whether/which tool the model
+  must call. Four modes via the neutral `llm.ToolChoiceType` enum:
+  `Auto` (model decides), `Any` (must call some tool), `Tool` (must
+  call this named tool, via `ToolChoice.Name`), `None` (disable tools).
+  - Anthropic: forwarded as `tool_choice: {"type": <type>, "name": <name>}`.
+    Keywords match pi-llm-go's enum 1:1.
+  - OpenAI Chat Completions: keyword remap — `Any` → `"required"`.
+    `Tool` becomes `{"type":"function","function":{"name":"..."}}`.
+  - OpenAI Responses API: same keywords; `Tool` uses the flatter
+    `{"type":"function","name":"..."}` shape (no nested `function`).
+  - Gemini: forwarded as `toolConfig.functionCallingConfig` with
+    `mode` mapping `Auto`→AUTO, `Any`→ANY, `None`→NONE; `Tool` becomes
+    `mode=ANY` + `allowedFunctionNames=[Name]` (Gemini has no dedicated
+    force-this-exact-tool mode).
+  - Build-time validation: `Type=Tool` without `Name` returns an error
+    BEFORE the request leaves the client (provider would 400 otherwise).
+  - **Anthropic + extended thinking caveat**: `Any` and `Tool` are
+    incompatible with `ThinkingConfig` on Anthropic (only `Auto`/`None`
+    work). Surfaces as a 400 at request time. Documented on
+    `ToolChoice` godoc.
+- `examples/strict_tool_use/` — cookbook demonstrating both features:
+  enum-constrained input + forced named tool call against Anthropic.
+
 ## [0.10.2] - 2026-05-14
 
 Republishes v0.10.1's thinking-block fix with internal product
