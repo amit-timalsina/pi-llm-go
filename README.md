@@ -246,6 +246,15 @@ Server-supplied `Retry-After` hints dominate the exponential schedule (capped at
 
 `llm.RunWithRetry[T]` is exported so callers can build cross-provider fallback / circuit-breaker logic on top.
 
+**Telemetry:** every retry emits a `slog.DebugContext` record so silent backoff windows are visible to ops:
+
+```
+DEBUG llm.retry.attempt   attempt=1 max_attempts=4 delay_ms=820 cause=overloaded retry_after_ms=500 error="..."
+DEBUG llm.retry.exhausted max_attempts=4 last_cause=overloaded error="..."
+```
+
+Default slog level is INFO so these are silent unless you configure DEBUG. Field names are part of the v1 contract — write a custom `slog.Handler` to route them to Prometheus counters, dashboards, or wherever else. Otel users can bridge via [`otelslog`](https://pkg.go.dev/go.opentelemetry.io/contrib/bridges/otelslog).
+
 ## Cost telemetry
 
 Every completion surfaces a typed `Usage` value on the final `EventMessageEnd` (and on the `*llm.Message` returned by `Complete` / `Accumulate`):
