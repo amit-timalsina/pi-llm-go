@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"math/rand/v2"
 	"net"
 	"time"
@@ -166,6 +167,26 @@ func (p RetryPolicy) nextDelay(attempt int, err error) time.Duration {
 // Used internally by provider implementations to wrap their HTTP
 // attempt loops; exported so callers building higher-level retry
 // (e.g. cross-provider fallback) can compose on top.
+//
+// Telemetry: every retry fires a structured slog DEBUG record via
+// slog.Default(). The default slog handler is silent at DEBUG so
+// consumers see nothing by default; configure DEBUG-level handling
+// to surface them.
+//
+//	"llm.retry.attempt"   — emitted for each retriable failure that
+//	                        will be retried. Fields:
+//	                          attempt          (int, 1-indexed)
+//	                          max_attempts     (int)
+//	                          delay_ms         (int, planned sleep)
+//	                          cause            (string, see causeOf)
+//	                          retry_after_ms   (int, when server hint present)
+//	                          err              (string, truncated)
+//	"llm.retry.exhausted" — emitted once when all attempts surrender.
+//	                        Fields: max_attempts, last_cause, err.
+//
+// No telemetry record is emitted for a successful first attempt
+// (zero noise on the happy path) or for non-retriable errors (the
+// caller sees the error immediately; the surface needs no narration).
 func RunWithRetry[T any](ctx context.Context, policy RetryPolicy, do func() (T, error)) (T, error) {
 	var (
 		zero   T
@@ -194,6 +215,7 @@ func RunWithRetry[T any](ctx context.Context, policy RetryPolicy, do func() (T, 
 			return zero, err
 		}
 		delay := policy.nextDelay(attempt, err)
+		logRetryAttempt(ctx, attempt+1, attempts, delay, err)
 		if delay > 0 {
 			timer := time.NewTimer(delay)
 			select {
@@ -204,5 +226,65 @@ func RunWithRetry[T any](ctx context.Context, policy RetryPolicy, do func() (T, 
 			}
 		}
 	}
+	if err != nil && attempts > 1 && IsRetriable(err) {
+		// Reached only when the LAST attempt's error was retriable and
+		// we ran out of budget. Non-retriable last errors return
+		// directly from inside the loop, never hitting this path.
+		slog.DebugContext(ctx, "llm.retry.exhausted",
+			slog.Int("max_attempts", attempts),
+			slog.String("last_cause", causeOf(err)),
+			slog.String("err", truncateErr(err)),
+		)
+	}
 	return zero, err
+}
+
+// logRetryAttempt emits a structured DEBUG slog record before each
+// retry sleep. Centralized so the field set stays consistent and the
+// `retry_after_ms` field is only added when the server hinted.
+func logRetryAttempt(ctx context.Context, attempt, maxAttempts int, delay time.Duration, err error) {
+	attrs := []slog.Attr{
+		slog.Int("attempt", attempt),
+		slog.Int("max_attempts", maxAttempts),
+		slog.Int64("delay_ms", delay.Milliseconds()),
+		slog.String("cause", causeOf(err)),
+		slog.String("err", truncateErr(err)),
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.RetryAfter > 0 {
+		attrs = append(attrs, slog.Int64("retry_after_ms", apiErr.RetryAfter.Milliseconds()))
+	}
+	slog.Default().LogAttrs(ctx, slog.LevelDebug, "llm.retry.attempt", attrs...)
+}
+
+// causeOf classifies err into one of the retriable category labels.
+// Returns "unknown" for non-retriable errors — never expected on the
+// telemetry path, but defensive in case IsRetriable's coverage shifts.
+func causeOf(err error) string {
+	switch {
+	case errors.Is(err, ErrRateLimit):
+		return "rate_limit"
+	case errors.Is(err, ErrOverloaded):
+		return "overloaded"
+	case errors.Is(err, ErrServerError):
+		return "server_error"
+	default:
+		var netErr net.Error
+		if errors.As(err, &netErr) {
+			return "net_error"
+		}
+		return "unknown"
+	}
+}
+
+// truncateErr caps err.Error() length so log lines stay scannable.
+// Provider error bodies can be multi-kilobyte; 256 bytes is enough
+// to identify the failure class without flooding the log shipper.
+func truncateErr(err error) string {
+	s := err.Error()
+	const max = 256
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "...(truncated)"
 }
