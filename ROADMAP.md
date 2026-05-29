@@ -7,6 +7,11 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v0.11.1** shipped 2026-05-29 — Structured slog telemetry on
+  `RunWithRetry`. Closes #29 — silent backoff windows during long
+  agent runs are now observable. No new public API; slog field
+  names locked as v1 contract. Surfaced from
+  noumenal-ai/noumenal_agent#105 (consumer-driven).
 - **v0.11.0** shipped 2026-05-20 — Strict tool use (`Tool.Strict`) +
   `Request.ToolChoice` across all four providers. Closes #26 — the
   Noumenal Actioning Agent's rule-generator needed enum-constrained

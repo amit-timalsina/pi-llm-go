@@ -6,6 +6,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-05-29
+
+Adds slog telemetry on the retry loop so long-running consumers can
+see backoff windows that were previously invisible. No new public API
+surface; slog field names are locked as part of the v1 contract.
+Closes #29 (surfaced from noumenal-ai/noumenal_agent#105 — silent
+30-second-to-30-minute retries during DSA runs).
+
 ### Added
 
 - **Structured slog telemetry on `RunWithRetry`** (closes #29). Each
@@ -595,7 +603,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.10.0...v0.10.2
 [0.10.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.9.0...v0.10.0
