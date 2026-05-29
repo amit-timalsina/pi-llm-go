@@ -20,8 +20,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - Attempt fields: `attempt` (1-indexed), `max_attempts`, `delay_ms`,
     `cause` ∈ {`rate_limit` / `overloaded` / `server_error` /
     `net_error` / `unknown`}, `retry_after_ms` (when server-hinted),
-    `err` (truncated to 256 chars).
-  - Exhaustion fields: `max_attempts`, `last_cause`, `err`.
+    `error` (truncated to 256 chars). The `error` key follows
+    structured-log shipper convention (Datadog / ECS / Loki all
+    auto-extract on that name) rather than the Go-variable
+    convention `err`.
+  - Exhaustion fields: `max_attempts`, `last_cause`, `error`.
   - No record on first-attempt success or non-retriable errors —
     those paths don't need narration.
   - **Field names are part of the v1 public contract.** Consumers

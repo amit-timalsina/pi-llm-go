@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -123,8 +124,8 @@ func TestRetry_SlogPerAttemptRecord(t *testing.T) {
 	if got := attrs["retry_after_ms"].Int64(); got != 50 {
 		t.Errorf("retry_after_ms: got %d, want 50 (from APIError.RetryAfter)", got)
 	}
-	if got := attrs["err"].String(); !strings.Contains(got, "rate limited") {
-		t.Errorf("err: got %q, want substring 'rate limited'", got)
+	if got := attrs["error"].String(); !strings.Contains(got, "rate limited") {
+		t.Errorf("error: got %q, want substring 'rate limited'", got)
 	}
 	// delay_ms is jittered and clamped — assert it's in (0, MaxDelay]
 	// rather than expecting an exact value. The RetryAfter (50ms) is
@@ -145,6 +146,10 @@ func TestRetry_SlogClassifiesCause(t *testing.T) {
 		{"rate_limit", &llm.APIError{Provider: "x", Status: 429, Inner: llm.ErrRateLimit}, "rate_limit"},
 		{"overloaded", &llm.APIError{Provider: "x", Status: 529, Inner: llm.ErrOverloaded}, "overloaded"},
 		{"server_error", &llm.APIError{Provider: "x", Status: 503, Inner: llm.ErrServerError}, "server_error"},
+		// net.Error path — DNS / connect refused / TLS handshake all
+		// satisfy net.Error via *net.OpError. Closes the documented
+		// enum value gap.
+		{"net_error", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}, "net_error"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -245,6 +250,47 @@ func TestRetry_SlogSilentOnNonRetriableError(t *testing.T) {
 	}
 }
 
+// TestRetry_SlogEmitOrderingCtxCancelMidSleep locks the ordering
+// invariant: the per-attempt slog record is emitted BEFORE the
+// backoff sleep. If the consumer cancels mid-sleep, the attempt
+// record is on the books (so ops can see "we were retrying when the
+// cancel arrived") while the exhaustion record is NOT emitted (we
+// didn't surrender, the caller cancelled).
+//
+// A future refactor that inverts this ordering (sleep then emit)
+// would silently hide all retries that get cancelled — this test
+// freezes the current contract.
+func TestRetry_SlogEmitOrderingCtxCancelMidSleep(t *testing.T) {
+	h := installCaptureHandler(t)
+	policy := llm.RetryPolicy{
+		MaxAttempts: 5,
+		BaseDelay:   100 * time.Millisecond, // long enough to cancel during
+		MaxDelay:    200 * time.Millisecond,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	var attempts int
+	_, err := llm.RunWithRetry(ctx, policy, func() (string, error) {
+		attempts++
+		return "", &llm.APIError{Provider: "x", Status: 529, Inner: llm.ErrOverloaded}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+
+	if h.recordOf("llm.retry.attempt") == nil {
+		t.Error("expected an llm.retry.attempt record before the cancel landed")
+	}
+	if h.recordOf("llm.retry.exhausted") != nil {
+		t.Error("did not expect an exhausted record on ctx-cancel (we did not surrender)")
+	}
+}
+
 // TestRetry_SlogTruncatesLongErrorMessage verifies the err field cap.
 // Provider error bodies can be multi-kilobyte; the truncated form
 // stays scannable for log aggregators.
@@ -265,7 +311,7 @@ func TestRetry_SlogTruncatesLongErrorMessage(t *testing.T) {
 	if r == nil {
 		t.Fatal("expected llm.retry.attempt record")
 	}
-	got := attrMap(r)["err"].String()
+	got := attrMap(r)["error"].String()
 	// Cap is 256 + the "...(truncated)" sentinel ≈ 271 chars max.
 	if len(got) > 300 {
 		t.Errorf("err truncation failed: got %d chars, want <=300", len(got))

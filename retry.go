@@ -67,6 +67,11 @@ func DefaultRetryPolicy() RetryPolicy {
 // Used internally by RunWithRetry; exported so callers can build their
 // own retry layer on top.
 //
+// Note: callers who reimplement the retry loop on top of IsRetriable
+// will NOT inherit RunWithRetry's slog telemetry — the
+// `llm.retry.attempt` / `llm.retry.exhausted` records are emitted by
+// RunWithRetry itself, not by IsRetriable.
+//
 // Returns true for:
 //   - ErrRateLimit (429)
 //   - ErrOverloaded (529)
@@ -171,18 +176,25 @@ func (p RetryPolicy) nextDelay(attempt int, err error) time.Duration {
 // Telemetry: every retry fires a structured slog DEBUG record via
 // slog.Default(). The default slog handler is silent at DEBUG so
 // consumers see nothing by default; configure DEBUG-level handling
-// to surface them.
+// to surface them. Routing: filter on Message prefix "llm.retry."
+// in your slog.Handler to send pi-llm-go retry records elsewhere
+// without affecting your app default. Otel users can bridge via
+// the otelslog package.
 //
 //	"llm.retry.attempt"   — emitted for each retriable failure that
 //	                        will be retried. Fields:
 //	                          attempt          (int, 1-indexed)
 //	                          max_attempts     (int)
-//	                          delay_ms         (int, planned sleep)
+//	                          delay_ms         (int64, planned sleep)
 //	                          cause            (string, see causeOf)
-//	                          retry_after_ms   (int, when server hint present)
-//	                          err              (string, truncated)
+//	                          retry_after_ms   (int64, when server hint present)
+//	                          error            (string, truncated to ~256 chars)
 //	"llm.retry.exhausted" — emitted once when all attempts surrender.
-//	                        Fields: max_attempts, last_cause, err.
+//	                        Fields: max_attempts, last_cause, error.
+//
+// Field names are part of pi-llm-go's v1 public contract — consumers
+// writing custom slog.Handlers (Prometheus counter, dashboard
+// enrichment, etc.) can rely on this set not churning post-v1.
 //
 // No telemetry record is emitted for a successful first attempt
 // (zero noise on the happy path) or for non-retriable errors (the
@@ -233,7 +245,7 @@ func RunWithRetry[T any](ctx context.Context, policy RetryPolicy, do func() (T, 
 		slog.DebugContext(ctx, "llm.retry.exhausted",
 			slog.Int("max_attempts", attempts),
 			slog.String("last_cause", causeOf(err)),
-			slog.String("err", truncateErr(err)),
+			slog.String("error", truncateErr(err)),
 		)
 	}
 	return zero, err
@@ -242,13 +254,18 @@ func RunWithRetry[T any](ctx context.Context, policy RetryPolicy, do func() (T, 
 // logRetryAttempt emits a structured DEBUG slog record before each
 // retry sleep. Centralized so the field set stays consistent and the
 // `retry_after_ms` field is only added when the server hinted.
+//
+// The `error` field name follows structured-logging shipper
+// convention (Datadog, Elastic Common Schema, Grafana Loki all
+// auto-extract on the key `error`) rather than the Go variable-name
+// convention `err`.
 func logRetryAttempt(ctx context.Context, attempt, maxAttempts int, delay time.Duration, err error) {
 	attrs := []slog.Attr{
 		slog.Int("attempt", attempt),
 		slog.Int("max_attempts", maxAttempts),
 		slog.Int64("delay_ms", delay.Milliseconds()),
 		slog.String("cause", causeOf(err)),
-		slog.String("err", truncateErr(err)),
+		slog.String("error", truncateErr(err)),
 	}
 	var apiErr *APIError
 	if errors.As(err, &apiErr) && apiErr.RetryAfter > 0 {

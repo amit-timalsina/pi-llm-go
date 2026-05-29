@@ -249,8 +249,8 @@ Server-supplied `Retry-After` hints dominate the exponential schedule (capped at
 **Telemetry:** every retry emits a `slog.DebugContext` record so silent backoff windows are visible to ops:
 
 ```
-DEBUG llm.retry.attempt   attempt=1 max_attempts=4 delay_ms=820 cause=overloaded retry_after_ms=500 err="..."
-DEBUG llm.retry.exhausted max_attempts=4 last_cause=overloaded err="..."
+DEBUG llm.retry.attempt   attempt=1 max_attempts=4 delay_ms=820 cause=overloaded retry_after_ms=500 error="..."
+DEBUG llm.retry.exhausted max_attempts=4 last_cause=overloaded error="..."
 ```
 
 Default slog level is INFO so these are silent unless you configure DEBUG. Field names are part of the v1 contract — write a custom `slog.Handler` to route them to Prometheus counters, dashboards, or wherever else. Otel users can bridge via [`otelslog`](https://pkg.go.dev/go.opentelemetry.io/contrib/bridges/otelslog).
