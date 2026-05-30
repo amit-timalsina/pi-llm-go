@@ -6,6 +6,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-05-30
+
+Pricing seed expansion (closes #32). Adds entries for two
+noumenal-pinned models (Opus 4.6 for AA reasoning, Robotics ER 1.6
+for DSA VLM) plus Opus 4.5 + Sonnet 4.5 (same verification fetch).
+`ClaudeOpus4_6` constant added to `providers/anthropic` to match
+the per-package model-id-constant invariant. Surfaced from
+noumenal-ai/noumenal_agent#108.
+
 ### Added
 
 - **Pricing seed entries for `claude-opus-4-6`,
@@ -636,7 +645,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.10.0...v0.10.2
