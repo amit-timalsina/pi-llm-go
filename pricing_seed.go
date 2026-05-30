@@ -4,7 +4,8 @@ package llm
 // across the three providers pi-llm-go ships. Rates are dollars per
 // million tokens.
 //
-// Verified against provider docs on 2026-05-13:
+// Verified against provider docs on 2026-05-13; re-verified for the
+// new entries on 2026-05-30:
 //
 //   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
 //   - OpenAI:    https://developers.openai.com/api/docs/pricing
@@ -49,7 +50,14 @@ package llm
 // register custom Pricing values for their billing scenario.
 var seedPricing = map[string]Pricing{
 	// Anthropic Claude 4 family.
+	//
+	// Opus 4.6 ships at the SAME prices as Opus 4.7 per Anthropic's
+	// pricing table (verified 2026-05-30). Listed explicitly rather
+	// than relying on caller fallback because noumenal's Actioning
+	// Agent pins Opus 4.6 (Opus 4.7 deprecates `temperature` and the
+	// AA needs temperature=0 for reproducibility — closes #32).
 	"claude-opus-4-7":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite5m: 6.25, CacheWrite1h: 10.00},
+	"claude-opus-4-6":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite5m: 6.25, CacheWrite1h: 10.00},
 	"claude-sonnet-4-6": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite5m: 3.75, CacheWrite1h: 6.00},
 	"claude-haiku-4-5":  {Input: 1.00, Output: 5.00, CacheRead: 0.10, CacheWrite5m: 1.25, CacheWrite1h: 2.00},
 
@@ -65,7 +73,16 @@ var seedPricing = map[string]Pricing{
 	// long-context (>200k) doubles per Google's published policy and
 	// must be handled by a caller-side RegisterPricing override if the
 	// caller routinely sends large prompts.
-	"gemini-3.1-pro":   {Input: 2.00, Output: 12.00, CacheRead: 0.20},
-	"gemini-2.5-pro":   {Input: 1.25, Output: 10.00, CacheRead: 0.125},
-	"gemini-2.5-flash": {Input: 0.30, Output: 2.50, CacheRead: 0.03},
+	//
+	// Robotics ER 1.6 Preview lists $1 text/image/video input and $2
+	// audio on Google AI Studio pricing (verified 2026-05-30). The
+	// seed entry uses the text/image/video rate — consistent with our
+	// gemini-2.5-flash entry which also uses the standard
+	// text/image/video rate over its audio rate. Audio-heavy callers
+	// should `RegisterPricing` with their billing-mix-appropriate
+	// blend. Closes #32 (noumenal DSA VLM default per ADR-024).
+	"gemini-3.1-pro":                 {Input: 2.00, Output: 12.00, CacheRead: 0.20},
+	"gemini-2.5-pro":                 {Input: 1.25, Output: 10.00, CacheRead: 0.125},
+	"gemini-2.5-flash":               {Input: 0.30, Output: 2.50, CacheRead: 0.03},
+	"gemini-robotics-er-1.6-preview": {Input: 1.00, Output: 5.00},
 }
