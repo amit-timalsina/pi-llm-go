@@ -8,9 +8,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Pricing seed entries for `claude-opus-4-6` and
-  `gemini-robotics-er-1.6-preview`** (closes #32). Both are
-  production-shipping defaults in the noumenal consumer:
+- **Pricing seed entries for `claude-opus-4-6`,
+  `claude-opus-4-5`, `claude-sonnet-4-5`, and
+  `gemini-robotics-er-1.6-preview`** (closes #32). The two
+  noumenal-pinned models in #32 are first-class; cold-context
+  reviewer flagged that Opus 4.5 and Sonnet 4.5 ship at the same
+  rates per the same verification fetch, so they're added in the
+  same PR while the cost is paid. `claude-opus-4-6` constant added
+  to `providers/anthropic` to match the per-package model-id-constant
+  invariant.
   - `claude-opus-4-6`: noumenal AA reasoning default (locked
     2026-05-20 because Opus 4.7 deprecates `temperature` and the AA
     pins `temperature=0` for reproducibility). Same rate as Opus 4.7

@@ -4,8 +4,11 @@ package llm
 // across the three providers pi-llm-go ships. Rates are dollars per
 // million tokens.
 //
-// Verified against provider docs on 2026-05-13; re-verified for the
-// new entries on 2026-05-30:
+// Last verified against provider docs on 2026-05-30 (this PR
+// re-verified the Anthropic + Gemini tables in full while adding
+// Opus 4.6 / Opus 4.5 / Sonnet 4.5 / Robotics ER 1.6 Preview;
+// OpenAI not re-checked this round). Per-entry verification history
+// lives in git blame.
 //
 //   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
 //   - OpenAI:    https://developers.openai.com/api/docs/pricing
@@ -51,14 +54,19 @@ package llm
 var seedPricing = map[string]Pricing{
 	// Anthropic Claude 4 family.
 	//
-	// Opus 4.6 ships at the SAME prices as Opus 4.7 per Anthropic's
-	// pricing table (verified 2026-05-30). Listed explicitly rather
-	// than relying on caller fallback because noumenal's Actioning
-	// Agent pins Opus 4.6 (Opus 4.7 deprecates `temperature` and the
-	// AA needs temperature=0 for reproducibility — closes #32).
+	// Opus 4.5 / 4.6 / 4.7 all ship at the SAME prices per Anthropic's
+	// pricing table (verified 2026-05-30) — the rate cut from the
+	// $15/$75 Opus 4 / 4.1 tier to $5/$25 applied at Opus 4.5 and
+	// has held through 4.7. Sonnet 4.5 and 4.6 likewise share rates.
+	// Listed explicitly so noumenal's Actioning Agent (pins Opus 4.6
+	// because Opus 4.7 deprecates `temperature` and the AA needs
+	// temperature=0 for reproducibility — closes #32) gets a direct
+	// hit instead of ErrUnknownModel.
 	"claude-opus-4-7":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite5m: 6.25, CacheWrite1h: 10.00},
 	"claude-opus-4-6":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite5m: 6.25, CacheWrite1h: 10.00},
+	"claude-opus-4-5":   {Input: 5.00, Output: 25.00, CacheRead: 0.50, CacheWrite5m: 6.25, CacheWrite1h: 10.00},
 	"claude-sonnet-4-6": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite5m: 3.75, CacheWrite1h: 6.00},
+	"claude-sonnet-4-5": {Input: 3.00, Output: 15.00, CacheRead: 0.30, CacheWrite5m: 3.75, CacheWrite1h: 6.00},
 	"claude-haiku-4-5":  {Input: 1.00, Output: 5.00, CacheRead: 0.10, CacheWrite5m: 1.25, CacheWrite1h: 2.00},
 
 	// OpenAI GPT-5 family. Tokenizers and rates verified against the

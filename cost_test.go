@@ -174,6 +174,30 @@ func TestComputeCost_GeminiRoboticsER(t *testing.T) {
 	}
 }
 
+// TestPricingFor_FormerlyUnknownModelsAreNowPriced is the
+// backward-compat regression guard for #32: each of the newly-seeded
+// model IDs previously returned ok=false from PricingFor (and
+// ErrUnknownModel from ComputeCost). Adding seed entries silently
+// flips this — callers using errors.Is(err, ErrUnknownModel) to
+// graceful-degrade will now start receiving cost data. This test
+// pins that transition so a future seed-cleanup that drops an entry
+// fails CI.
+func TestPricingFor_FormerlyUnknownModelsAreNowPriced(t *testing.T) {
+	t.Parallel()
+
+	newlySeeded := []string{
+		"claude-opus-4-6",
+		"claude-opus-4-5",
+		"claude-sonnet-4-5",
+		"gemini-robotics-er-1.6-preview",
+	}
+	for _, m := range newlySeeded {
+		if _, ok := llm.PricingFor(m); !ok {
+			t.Errorf("PricingFor(%q) = ok:false — seed entry missing; v0.11.2 regression", m)
+		}
+	}
+}
+
 func TestComputeCost_UnknownModelWrapsSentinel(t *testing.T) {
 	t.Parallel()
 
