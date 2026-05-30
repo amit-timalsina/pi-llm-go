@@ -7,6 +7,11 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v0.11.2** shipped 2026-05-30 — Pricing seed entries for
+  `claude-opus-4-6` + `claude-opus-4-5` + `claude-sonnet-4-5` +
+  `gemini-robotics-er-1.6-preview`. Closes #32 — noumenal AA + DSA
+  VLM previously hit `ErrUnknownModel`. Added `ClaudeOpus4_6`
+  provider constant. Surfaced from noumenal-ai/noumenal_agent#108.
 - **v0.11.1** shipped 2026-05-29 — Structured slog telemetry on
   `RunWithRetry`. Closes #29 — silent backoff windows during long
   agent runs are now observable. No new public API; slog field
