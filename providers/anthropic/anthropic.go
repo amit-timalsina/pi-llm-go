@@ -33,6 +33,7 @@ import (
 // These are convenience constants only — llm.Request.Model takes any string.
 const (
 	ClaudeOpus4_7   = "claude-opus-4-7"
+	ClaudeOpus4_6   = "claude-opus-4-6"
 	ClaudeSonnet4_6 = "claude-sonnet-4-6"
 	ClaudeHaiku4_5  = "claude-haiku-4-5"
 )

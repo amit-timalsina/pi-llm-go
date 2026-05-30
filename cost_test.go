@@ -116,6 +116,88 @@ func TestComputeCost_BuiltInSonnetTable(t *testing.T) {
 	}
 }
 
+// TestComputeCost_OpusFortySix verifies the v0.11.2 addition (closes
+// #32). Opus 4.6 ships at the same rate as Opus 4.7; noumenal's AA
+// pins this model. Regression guard.
+func TestComputeCost_OpusFortySix(t *testing.T) {
+	t.Parallel()
+
+	usage := llm.Usage{
+		InputTokens:        1_000_000,
+		OutputTokens:       100_000,
+		CacheReadTokens:    1_000_000,
+		CacheWrite5mTokens: 100_000,
+		CacheWrite1hTokens: 100_000,
+	}
+	cost, err := llm.ComputeCost(usage, "claude-opus-4-6")
+	if err != nil {
+		t.Fatalf("ComputeCost(opus-4-6): %v", err)
+	}
+	if !approxEqual(cost.Input, 5.00) {
+		t.Errorf("input: got %v, want 5.00", cost.Input)
+	}
+	if !approxEqual(cost.Output, 2.50) {
+		t.Errorf("output: got %v, want 2.50", cost.Output)
+	}
+	if !approxEqual(cost.CacheRead, 0.50) {
+		t.Errorf("cache_read: got %v, want 0.50", cost.CacheRead)
+	}
+	if !approxEqual(cost.CacheWrite5m, 0.625) {
+		t.Errorf("cache_write_5m: got %v, want 0.625", cost.CacheWrite5m)
+	}
+	if !approxEqual(cost.CacheWrite1h, 1.00) {
+		t.Errorf("cache_write_1h: got %v, want 1.00", cost.CacheWrite1h)
+	}
+}
+
+// TestComputeCost_GeminiRoboticsER verifies the v0.11.2 addition (closes
+// #32). noumenal's DSA VLM pins this model.
+func TestComputeCost_GeminiRoboticsER(t *testing.T) {
+	t.Parallel()
+
+	usage := llm.Usage{InputTokens: 1_000_000, OutputTokens: 100_000}
+	cost, err := llm.ComputeCost(usage, "gemini-robotics-er-1.6-preview")
+	if err != nil {
+		t.Fatalf("ComputeCost(gemini-robotics-er-1.6-preview): %v", err)
+	}
+	if !approxEqual(cost.Input, 1.00) {
+		t.Errorf("input: got %v, want 1.00 (text/image/video standard tier)", cost.Input)
+	}
+	if !approxEqual(cost.Output, 0.50) {
+		t.Errorf("output: got %v, want 0.50", cost.Output)
+	}
+	// Robotics ER has no listed context-caching rate today; cache
+	// fields should stay at zero.
+	if cost.CacheRead != 0 || cost.CacheWrite5m != 0 || cost.CacheWrite1h != 0 {
+		t.Errorf("expected zero cache costs for Robotics ER (no published rate); got read=%v 5m=%v 1h=%v",
+			cost.CacheRead, cost.CacheWrite5m, cost.CacheWrite1h)
+	}
+}
+
+// TestPricingFor_FormerlyUnknownModelsAreNowPriced is the
+// backward-compat regression guard for #32: each of the newly-seeded
+// model IDs previously returned ok=false from PricingFor (and
+// ErrUnknownModel from ComputeCost). Adding seed entries silently
+// flips this — callers using errors.Is(err, ErrUnknownModel) to
+// graceful-degrade will now start receiving cost data. This test
+// pins that transition so a future seed-cleanup that drops an entry
+// fails CI.
+func TestPricingFor_FormerlyUnknownModelsAreNowPriced(t *testing.T) {
+	t.Parallel()
+
+	newlySeeded := []string{
+		"claude-opus-4-6",
+		"claude-opus-4-5",
+		"claude-sonnet-4-5",
+		"gemini-robotics-er-1.6-preview",
+	}
+	for _, m := range newlySeeded {
+		if _, ok := llm.PricingFor(m); !ok {
+			t.Errorf("PricingFor(%q) = ok:false — seed entry missing; v0.11.2 regression", m)
+		}
+	}
+}
+
 func TestComputeCost_UnknownModelWrapsSentinel(t *testing.T) {
 	t.Parallel()
 

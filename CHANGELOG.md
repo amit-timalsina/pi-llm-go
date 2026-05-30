@@ -6,6 +6,39 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Pricing seed entries for `claude-opus-4-6`,
+  `claude-opus-4-5`, `claude-sonnet-4-5`, and
+  `gemini-robotics-er-1.6-preview`** (closes #32). The two
+  noumenal-pinned models in #32 are first-class; cold-context
+  reviewer flagged that Opus 4.5 and Sonnet 4.5 ship at the same
+  rates per the same verification fetch, so they're added in the
+  same PR while the cost is paid. `claude-opus-4-6` constant added
+  to `providers/anthropic` to match the per-package model-id-constant
+  invariant.
+  - `claude-opus-4-6`: noumenal AA reasoning default (locked
+    2026-05-20 because Opus 4.7 deprecates `temperature` and the AA
+    pins `temperature=0` for reproducibility). Same rate as Opus 4.7
+    per Anthropic's published table — $5 input / $25 output /
+    $0.50 cache read / $6.25 cache write 5m / $10 cache write 1h.
+  - `gemini-robotics-er-1.6-preview`: noumenal DSA video VLM default
+    per ADR-024. Standard tier text/image/video rate $1 input /
+    $5 output. Audio is $2 input but the model is used as a VLM so
+    the seed uses the standard tier (consistent with the existing
+    `gemini-2.5-flash` entry's treatment of its $0.30 vs $1 audio
+    split). Audio-heavy consumers should `RegisterPricing` with a
+    blend appropriate to their billing mix.
+  - Pricing verified live against Anthropic + Google AI Studio
+    pricing pages on 2026-05-30.
+  - Regression tests added — `TestComputeCost_OpusFortySix` (full
+    cache breakdown asserted) and `TestComputeCost_GeminiRoboticsER`
+    (zero-cache-cost guard for the no-listed-cache-rate path).
+  - Backward compat: both entries previously returned
+    `ErrUnknownModel`; adding pricing silently starts producing
+    cost data for callers, which is the documented graceful-
+    degrade path. Surfaced from noumenal-ai/noumenal_agent#108.
+
 ## [0.11.1] - 2026-05-29
 
 Adds slog telemetry on the retry loop so long-running consumers can
