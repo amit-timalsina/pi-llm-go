@@ -10,9 +10,7 @@ Sibling repo: [`pi-agent-go`](https://github.com/amit-timalsina/pi-agent-go) —
 
 ## Stability
 
-- **Pre-1.0 today.** API may change between minor versions; CHANGELOG documents every change.
-- v1.0 lands once we've used both repos in production for ≥4 weeks without API churn and at least one external Go user has reviewed the surface.
-- Post-1.0: strict semver. Breaking changes require a `vN+1` module path bump per Go's major-version policy.
+- **v1.0.0 — stable (since 2026-06-06).** Strict semver: the exported API is frozen; breaking changes require a `vN+1` module-path bump per Go's major-version policy. New providers / optional `Request`/`Options` fields / new sealed `Block`/`StreamEvent` variants are minor releases; bugfixes are patches. CHANGELOG documents every change.
 
 ## Hard rules
 

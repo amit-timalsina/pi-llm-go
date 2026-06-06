@@ -6,6 +6,43 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-06-06
+
+First **stable** release. No code changes vs `0.11.2` — this tag is the
+API-stability commitment plus a documentation feature-coverage pass.
+
+The public API has been **additive-only since 0.2.0** (no breaking
+churn across ~30 releases) and dogfooded in production at Noumenal
+(Actioning Agent + Data Scientist Agent) for ~4 weeks. From here the
+package follows [Semantic Versioning](https://semver.org/) strictly:
+no breaking change ships without a major-version (module-path) bump per
+Go's [major-version policy](https://go.dev/blog/v2-go-modules). New
+providers, new optional `Request`/`Options` fields, and new sealed
+`Block`/`StreamEvent` variants are minor releases.
+
+The self-imposed "≥1 external Go reviewer of the public surface" gate
+is **waived** — internal production dogfooding across two agents is
+treated as the adoption signal.
+
+### Changed
+
+- **Stability promise:** pre-1.0 → strict semver. See `ROADMAP.md` for
+  the closed v1.0 readiness checklist.
+
+### Documentation
+
+- README: status flipped to v1.0.0/stable; tool-calling quickstart now
+  documents `Request.ToolChoice` (forced tool choice) and `Tool.Strict`
+  (grammar-constrained arguments); extended-thinking section documents
+  adaptive `ThinkingConfig.Effort` alongside legacy `BudgetTokens`;
+  capability matrix gains forced-tool-choice + strict-tool-input rows;
+  Examples section lists all ten example programs; versioning section
+  rewritten for the semver commitment.
+- `llms.txt`: adds `llm.Tool.Strict`, `llm.ToolChoice`,
+  `llm.ThinkingConfig.Effort`, `llm.RunWithRetry`, retry telemetry, the
+  `ClaudeOpus4_6` constant, and the `strict_tool_use` example;
+  versioning section updated.
+
 ## [0.11.2] - 2026-05-30
 
 Pricing seed expansion (closes #32). Adds entries for two
