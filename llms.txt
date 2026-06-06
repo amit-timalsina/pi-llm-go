@@ -11,7 +11,10 @@ go get github.com/amit-timalsina/pi-llm-go
 ## Core types
 
 - `llm.LLM` — provider interface; one method: `Stream(ctx, Request) iter.Seq2[StreamEvent, error]`.
-- `llm.Request` — completion payload: `Model`, `System`, `Messages`, `Tools`, `Temperature`, `MaxTokens`, `Thinking`, `StopReasons`, `CacheRetention`.
+- `llm.Request` — completion payload: `Model`, `System`, `Messages`, `Tools`, `ToolChoice`, `Temperature`, `MaxTokens`, `Thinking`, `StopReasons`, `CacheRetention`.
+- `llm.Tool` — `Name`, `Description`, `InputSchema`, `Strict` (grammar-constrained argument sampling; wired across all four providers).
+- `llm.ToolChoice` — `{Type, Name}`; `Type` is `ToolChoiceAuto` | `ToolChoiceAny` | `ToolChoiceTool` | `ToolChoiceNone`.
+- `llm.ThinkingConfig` — `Effort` (`EffortLow`/`Medium`/`High`, adaptive; Opus 4.6+, required on 4.7+) or `BudgetTokens` (legacy); `Effort` wins when both set.
 - `llm.Message` — `Role` (User/Assistant/Tool) + `Content []Block`.
 - `llm.Block` — sealed sum: `TextBlock`, `ToolCallBlock`, `ToolResultBlock`, `ThinkingBlock`, `ImageBlock`, `VideoBlock`.
 - `llm.StreamEvent` — sealed sum: `EventMessageStart`, `EventTextStart`, `EventTextDelta`, `EventTextEnd`, `EventThinkingStart`, `EventThinkingDelta`, `EventThinkingEnd`, `EventToolCallStart`, `EventToolCallDelta`, `EventToolCallEnd`, `EventMessageEnd`.
@@ -23,12 +26,13 @@ go get github.com/amit-timalsina/pi-llm-go
 - `llm.Complete(ctx, llm.LLM, Request) (*Message, error)` — synchronous one-shot.
 - `llm.Accumulate(seq iter.Seq2[StreamEvent, error]) iter.Seq2[*Message, error]` — fold events into a growing Message.
 - `llm.ComputeCost(usage, model) (Cost, error)` — dollar projection from a Usage record; seed pricing table for Claude 4 / GPT-5 / Gemini 2.5+3.1; override via `RegisterPricing`.
-- `llm.RetryPolicy` + `Options.Retry` on every provider — exponential backoff + full jitter; honors Retry-After; retries only the initial HTTP attempt (no mid-stream replay).
+- `llm.RetryPolicy` + `Options.Retry` on every provider — exponential backoff + full jitter; honors Retry-After; retries only the initial HTTP attempt (no mid-stream replay). Emits `slog.DebugContext` telemetry per attempt (`llm.retry.attempt` / `llm.retry.exhausted`; field names are part of the v1 contract).
+- `llm.RunWithRetry[T](ctx, policy, do)` — exported retry combinator for building cross-provider fallback / circuit-breaker logic.
 - `llm.IsRateLimited`, `llm.IsOverloaded`, `llm.IsServerError`, `llm.IsContextLength`, `llm.IsPolicyViolation`, `llm.IsRetriable` — error-classification sugar.
 
 ## Providers
 
-- `providers/anthropic` — Anthropic Messages API. Constants: `ClaudeOpus4_7`, `ClaudeSonnet4_6`, `ClaudeHaiku4_5`. Implements `llm.TokenCounter`. Supports prompt caching (5m + 1h tiers via `CacheRetention=Short|Long`).
+- `providers/anthropic` — Anthropic Messages API. Constants: `ClaudeOpus4_7`, `ClaudeOpus4_6`, `ClaudeSonnet4_6`, `ClaudeHaiku4_5`. Implements `llm.TokenCounter`. Supports prompt caching (5m + 1h tiers via `CacheRetention=Short|Long`).
 - `providers/openai` — OpenAI-compatible Chat Completions. Constants: `GPT5_5`, `GPT5_4`, `GPT5_4Mini`, `GPT5_4Nano`. Works with Azure OpenAI, Groq, Together, vLLM, OpenRouter, Ollama via `Options.BaseURL` / `Options.URL` / `Options.Headers`.
 - `providers/openai_responses` — OpenAI Responses API (`/v1/responses`). GPT-5 server-side state, reasoning summaries (mapped to `ThinkingBlock`), built-in tool primitives.
 - `providers/gemini` — Google Gemini (Generative Language API). Constants: `Gemini3_1Pro`, `Gemini2_5Pro`, `Gemini2_5Flash`, `Gemini2_5FlashLite`. Implements `llm.TokenCounter`. Native `VideoBlock` input.
@@ -152,6 +156,7 @@ for ev, err := range p.Stream(ctx, req) {
 - [examples/multimodal](examples/multimodal) — image input on Anthropic + OpenAI.
 - [examples/multimodal_gemini](examples/multimodal_gemini) — text + image + video on Gemini; `--video-upload PATH` exercises the Files API.
 - [examples/prompt_caching](examples/prompt_caching) — `CacheRetention` knob.
+- [examples/strict_tool_use](examples/strict_tool_use) — `Tool.Strict` + `Request.ToolChoice` forcing schema-valid tool arguments.
 - [examples/thinking](examples/thinking) — extended thinking on Anthropic.
 - [examples/openai_responses](examples/openai_responses) — OpenAI Responses API + reasoning summaries.
 - [examples/azure_openai](examples/azure_openai) — Azure OpenAI through the OpenAI Chat provider.
@@ -159,7 +164,7 @@ for ev, err := range p.Stream(ctx, req) {
 
 ## Versioning and stability
 
-Pre-1.0 (v0.x). API may change between minor versions; every change documented in CHANGELOG.md. v1.0 lands when the API has been used in production for ≥4 weeks without churn + at least one external Go reviewer has signed off on the public surface. Used internally at Noumenal as of May 2026 — that's the consumer-adoption signal driving v1.0 timing.
+Stable as of **v1.0.0**. Follows semver strictly: no breaking change without a major-version (module-path) bump per Go's major-version policy. New providers, new optional `Request`/`Options` fields, and new sealed `Block`/`StreamEvent` variants are minor releases. Every change documented in CHANGELOG.md. Dogfooded in production at Noumenal since May 2026 (additive-only API since v0.2.0).
 
 ## License
 

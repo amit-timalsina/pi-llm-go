@@ -7,7 +7,7 @@
 
 **Minimal, provider-agnostic LLM client for Go.** Streaming completions, tool calling, prompt caching, token counting, cost projection, and retry middleware for **Anthropic Claude** (Messages API), **OpenAI** (Chat Completions + Responses API, including GPT-5 family), **Google Gemini** (text / image / video), and any **OpenAI-compatible** endpoint (Azure OpenAI, Groq, Together, vLLM, OpenRouter, Ollama). Idiomatic Go: `iter.Seq2` streaming, sealed sum types, `errors.Is` sentinels, `context.Context` cancellation.
 
-> Status: **v0.9.0, pre-1.0.** API may change between minor versions; see [CHANGELOG.md](CHANGELOG.md). Used internally at [Noumenal](https://noumenalai.com).
+> Status: **v1.0.0 — stable.** The public API follows [semver](https://semver.org/): no breaking changes without a major (module-path) bump. See [CHANGELOG.md](CHANGELOG.md). Dogfooded in production at [Noumenal](https://noumenalai.com).
 
 ## Install
 
@@ -23,6 +23,8 @@ Requires Go 1.23+ (for `iter.Seq2`).
 |---|---|---|---|---|
 | Streaming text | ✅ | ✅ | ✅ | ✅ |
 | Tool calling | ✅ | ✅ | ✅ | ✅ |
+| Forced tool choice (`Request.ToolChoice`) | ✅ | ✅ | ✅ | ✅ |
+| Strict / grammar-constrained tool input (`Tool.Strict`) | ✅ | ✅ | ✅ | ✅ |
 | Image input | ✅ | ✅ | ✅ | ✅ |
 | Video input | reject at wire | reject at wire | reject at wire | ✅ native |
 | Extended thinking | ✅ | — | ✅ (reasoning summaries) | ✅ |
@@ -105,6 +107,20 @@ for _, b := range msg.Content {
 }
 ```
 
+**Force a tool call** with `Request.ToolChoice` — `Auto` (default), `Any` (must call some tool), `Tool` (must call a named tool), or `None` (text only):
+
+```go
+req.ToolChoice = llm.ToolChoice{Type: llm.ToolChoiceTool, Name: "get_weather"}
+```
+
+**Constrain arguments to the schema** with `Tool.Strict: true`. The provider then samples tool arguments under a grammar derived from `InputSchema`, so enum fields and required keys come back exactly as declared instead of being silently dropped — no caller-side validate-and-retry loop. Wired across all four providers (Anthropic, OpenAI Chat, OpenAI Responses, Gemini):
+
+```go
+Tools: []llm.Tool{{Name: "set_valve", InputSchema: schema, Strict: true}}
+```
+
+See `examples/strict_tool_use` for the end-to-end pattern.
+
 ## When to pick `pi-llm-go`
 
 | You want | Pick |
@@ -122,7 +138,7 @@ for _, b := range msg.Content {
 - **Streaming-first.** `Stream()` returns `iter.Seq2[StreamEvent, error]` — Go 1.23 iterators, no callbacks, no goroutine leaks. `Complete()` is the synchronous helper for one-shot use.
 - **Sealed sum types.** `Block` and `StreamEvent` are interfaces with package-private marker methods. Type-switch exhaustively; the compiler tells you if you miss a case.
 - **Tool calling.** Declare tools on `Request.Tools`; receive `ToolCallBlock`s on the response; send `ToolResultBlock`s back. Pi-llm-go does not execute tools — that's [pi-agent-go](https://github.com/amit-timalsina/pi-agent-go)'s job.
-- **Extended thinking.** `ThinkingConfig{BudgetTokens: N}` on requests, surfaced as `ThinkingBlock` content. Anthropic-only at v1.
+- **Extended thinking.** Set `Request.Thinking` and read `ThinkingBlock` content back. Two shapes on Anthropic: adaptive `ThinkingConfig{Effort: llm.EffortMedium}` (Opus 4.6+, **required** on 4.7+) or legacy `ThinkingConfig{BudgetTokens: N}` (Sonnet/Haiku); `Effort` wins when both are set. OpenAI Responses exposes reasoning via its own `Options.ReasoningEffort`; Gemini thinks natively.
 - **Open-closed providers.** Implement `LLM.Stream` to add custom providers; no plugin registry needed.
 - **Errors that branch cleanly.** `errors.Is(err, llm.ErrRateLimit)` works through `*APIError` wraps; `errors.As(err, &apiErr)` gives you status + body.
 - **Cancellation = `context.Context`.** No bespoke abort signal types.
@@ -185,7 +201,7 @@ defer fc.Delete(context.Background(), ref.Name) // ~48h server-side TTL if you f
 content := []llm.Block{llm.TextBlock{Text: "describe"}, llm.VideoBlock{URI: ref.URI}}
 ```
 
-Vertex AI (gs:// URIs + OAuth) is a planned future addition; v0.5 only supports the Google AI direct endpoint.
+Vertex AI (gs:// URIs + OAuth) is a planned future addition; the Gemini provider currently targets the Google AI direct endpoint.
 
 ## Error handling
 
@@ -314,17 +330,20 @@ Runnable examples in `examples/`:
 
 - `examples/streaming` — basic streaming of a text response.
 - `examples/tool_calling` — hand-rolled tool-call loop against `get_current_time`.
+- `examples/strict_tool_use` — `Tool.Strict` + `Request.ToolChoice` forcing schema-valid arguments.
 - `examples/multimodal` — image input on Anthropic + OpenAI.
 - `examples/multimodal_gemini` — text / image / video against Gemini; `--video-upload PATH` exercises the Files API end-to-end.
 - `examples/prompt_caching` — `CacheRetention` knob driving Anthropic prompt-cache hits.
+- `examples/thinking` — extended thinking (`Effort` / `BudgetTokens`) with `ThinkingBlock` output.
+- `examples/openai_responses` — OpenAI Responses API with reasoning summaries.
+- `examples/azure_openai` — OpenAI-compatible provider against an Azure OpenAI deployment.
+- `examples/multi_turn` — multi-turn conversation accumulating assistant turns.
 
 Run them with `go run ./examples/streaming` (set `ANTHROPIC_API_KEY` first).
 
 ## Versioning
 
-This package is pre-1.0. Anything can change between minor versions; refer to [CHANGELOG.md](CHANGELOG.md) for each release.
-
-v1.0 lands when the API surface has been used in production for ≥4 weeks without churn. Post-1.0 follows semver strictly.
+As of **v1.0.0** this package follows [semver](https://semver.org/) strictly: the exported API is stable, and no breaking change ships without a major-version (module-path) bump per Go's [major-version policy](https://go.dev/blog/v2-go-modules). New providers, new optional `Request`/`Options` fields, and new sealed `Block`/`StreamEvent` variants are minor releases. See [CHANGELOG.md](CHANGELOG.md) for each release.
 
 ## License
 
