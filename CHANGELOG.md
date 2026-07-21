@@ -6,6 +6,31 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-21
+
+### Added
+
+- **`ThinkingConfig.Display`** (`ThinkingDisplay` enum: `DisplaySummarized`
+  / `DisplayOmitted`; empty = provider default) — opts adaptive-thinking
+  models back into summarized thinking **text**. Maps to Anthropic's
+  `thinking.display` wire field (nested under `thinking`, not
+  `output_config`). On Opus 4.7+ / Sonnet 5 / Fable 5 the provider
+  default is `omitted`: thinking blocks stream signature-only with empty
+  text, so `EventThinkingDelta`-based capture records nothing. Set
+  `Display: DisplaySummarized` to receive the reasoning summary. The
+  field rides on the adaptive shape only (set alongside `Effort`); it is
+  ignored in manual (`BudgetTokens`) mode. Optional `Request`/`Options`
+  field → minor release. Closes [#40].
+
+  ```go
+  Thinking: &llm.ThinkingConfig{Effort: llm.EffortHigh, Display: llm.DisplaySummarized}
+  ```
+
+- `examples/thinking` gains `-effort`, `-display`, and `-model` flags to
+  demonstrate the adaptive + summarized-thinking path.
+
+[#40]: https://github.com/amit-timalsina/pi-llm-go/issues/40
+
 ## [1.0.0] - 2026-06-06
 
 First **stable** release. No code changes vs `0.11.2` — this tag is the
@@ -682,7 +707,9 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.2...v1.0.0
 [0.11.2]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.10.2...v0.11.0

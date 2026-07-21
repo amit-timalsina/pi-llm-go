@@ -188,9 +188,15 @@ type apiTool struct {
 //
 // `budget_tokens` is tagged `omitempty` so the adaptive shape doesn't
 // leak a `budget_tokens: 0` field that Opus 4.7 would reject.
+//
+// `display` is nested here (under thinking), NOT under output_config
+// where effort lives — the two adaptive knobs land in different wire
+// places. It is `omitempty` so the manual shape never carries it (older
+// models don't accept the field).
 type apiThinkingConfig struct {
 	Type         string `json:"type"`
 	BudgetTokens int    `json:"budget_tokens,omitempty"`
+	Display      string `json:"display,omitempty"`
 }
 
 // applyThinkingConfig returns the on-wire thinking / output_config
@@ -206,15 +212,18 @@ type apiThinkingConfig struct {
 //   - t == nil OR both fields zero            → (nil, nil): no thinking
 //   - t.Effort != ""                          → adaptive shape; Effort wins
 //     even if t.BudgetTokens > 0 (lets callers pre-set both during
-//     a migration)
-//   - t.BudgetTokens > 0 (Effort empty)       → manual shape
+//     a migration). t.Display, if set, rides on the adaptive shape.
+//   - t.BudgetTokens > 0 (Effort empty)       → manual shape (Display
+//     is ignored — the field is adaptive-only)
 func applyThinkingConfig(t *llm.ThinkingConfig) (*apiThinkingConfig, *apiOutputConfig) {
 	if t == nil {
 		return nil, nil
 	}
 	switch {
 	case t.Effort != "":
-		return &apiThinkingConfig{Type: "adaptive"},
+		// Display rides on the adaptive shape only; omitempty drops it
+		// when unset so we never send an empty display string.
+		return &apiThinkingConfig{Type: "adaptive", Display: string(t.Display)},
 			&apiOutputConfig{Effort: string(t.Effort)}
 	case t.BudgetTokens > 0:
 		return &apiThinkingConfig{

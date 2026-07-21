@@ -62,6 +62,112 @@ func TestThinking_AdaptiveShapeWhenEffortSet(t *testing.T) {
 	}
 }
 
+// TestThinking_DisplayRidesAdaptiveShape verifies that setting
+// ThinkingConfig.Display emits `thinking.display` (nested under
+// thinking, NOT output_config) alongside the adaptive shape. Closes
+// issue #40 — without display, Opus 4.7+ streams signature-only
+// thinking blocks and consumers capture no reasoning text.
+func TestThinking_DisplayRidesAdaptiveShape(t *testing.T) {
+	t.Parallel()
+
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:     anthropic.ClaudeOpus4_7,
+		MaxTokens: 4096,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+		Thinking:  &llm.ThinkingConfig{Effort: llm.EffortHigh, Display: llm.DisplaySummarized},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(fs.lastBody, &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+
+	thinking, ok := body["thinking"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing thinking field: %v", body)
+	}
+	if thinking["type"] != "adaptive" {
+		t.Errorf("thinking.type: got %v, want adaptive", thinking["type"])
+	}
+	if thinking["display"] != "summarized" {
+		t.Errorf("thinking.display: got %v, want summarized", thinking["display"])
+	}
+	// display belongs under thinking, not output_config.
+	if oc, ok := body["output_config"].(map[string]any); ok {
+		if _, present := oc["display"]; present {
+			t.Errorf("display leaked into output_config; belongs under thinking: %v", oc)
+		}
+	}
+}
+
+// TestThinking_DisplayOmittedWhenUnset verifies that an adaptive request
+// with no Display set does NOT carry a `display` field at all (rather
+// than an empty string) — so we never send a malformed empty display.
+func TestThinking_DisplayOmittedWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:     anthropic.ClaudeOpus4_7,
+		MaxTokens: 4096,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+		Thinking:  &llm.ThinkingConfig{Effort: llm.EffortHigh}, // no Display
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	thinking, _ := body["thinking"].(map[string]any)
+	if _, present := thinking["display"]; present {
+		t.Errorf("display should be absent when Display unset: %v", thinking)
+	}
+}
+
+// TestThinking_DisplayIgnoredInManualShape verifies that Display is a
+// no-op in manual (budget_tokens) mode — older models don't accept the
+// field, so it must never leak onto the manual wire shape even if a
+// caller sets it.
+func TestThinking_DisplayIgnoredInManualShape(t *testing.T) {
+	t.Parallel()
+
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:     anthropic.ClaudeSonnet4_6,
+		MaxTokens: 4096,
+		Messages:  []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+		Thinking:  &llm.ThinkingConfig{BudgetTokens: 2048, Display: llm.DisplaySummarized},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	thinking, _ := body["thinking"].(map[string]any)
+	if thinking["type"] != "enabled" {
+		t.Errorf("thinking.type: got %v, want enabled", thinking["type"])
+	}
+	if _, present := thinking["display"]; present {
+		t.Errorf("display leaked into manual shape (adaptive-only field): %v", thinking)
+	}
+}
+
 // TestThinking_ManualShapeWhenOnlyBudgetTokensSet verifies that the
 // legacy manual shape still works (Opus 4.5 and older models require
 // it). budget_tokens lives INSIDE thinking; no output_config is sent.
