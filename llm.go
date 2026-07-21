@@ -97,6 +97,8 @@ type Request struct {
 //     `thinking.type = "adaptive"` plus a TOP-LEVEL `output_config.effort`
 //     enum. The model decides how many thinking tokens to spend within
 //     the effort bucket. REQUIRED on Opus 4.7+; manual mode returns 400.
+//     An optional `thinking.display` opts back into summarized thinking
+//     text (empty text is the default on Opus 4.7+); see Display.
 //   - **Manual** (Opus 4.5- and Sonnet 3.7, deprecated on 4.6 family) —
 //     `thinking.type = "enabled"` plus `thinking.budget_tokens`. The
 //     caller pins the exact token cap.
@@ -136,7 +138,44 @@ type ThinkingConfig struct {
 	// shape emitted, BudgetTokens ignored). This lets callers pre-set
 	// both during the migration without per-call branching.
 	BudgetTokens int
+
+	// Display controls whether adaptive-thinking models emit summarized
+	// thinking TEXT or signature-only blocks. It maps to Anthropic's
+	// `thinking.display` field (nested under thinking, NOT output_config
+	// — that trap is why Effort and Display land in different wire
+	// places).
+	//
+	// Empty string means "don't send display" (provider default). The
+	// provider default on Opus 4.7+ / Sonnet 5 / Fable 5 is "omitted":
+	// thinking blocks stream with EMPTY text (signature only), so a
+	// consumer capturing EventThinkingDelta records nothing. Set
+	// DisplaySummarized to receive summarized thinking text via
+	// thinking_delta events.
+	//
+	// Display only takes effect on the adaptive shape (set alongside
+	// Effort). It is ignored in manual mode (BudgetTokens only): older
+	// models return thinking text by default and don't accept the field.
+	Display ThinkingDisplay
 }
+
+// ThinkingDisplay controls the visibility of adaptive-thinking text on
+// Anthropic. It maps to the `thinking.display` wire field. Empty string
+// is the zero value and means "don't send display" (use the provider
+// default). Display affects visibility and billing of what's returned,
+// not whether the model thinks — the raw chain of thought is never
+// exposed under any setting.
+type ThinkingDisplay string
+
+// Thinking-display levels recognized by Anthropic's adaptive thinking.
+// Match the wire enum exactly.
+const (
+	// DisplaySummarized returns a readable summary of the reasoning via
+	// thinking_delta events (surfaced as EventThinkingDelta).
+	DisplaySummarized ThinkingDisplay = "summarized"
+	// DisplayOmitted streams thinking blocks with empty text (no
+	// thinking_delta events). This is the provider default on Opus 4.7+.
+	DisplayOmitted ThinkingDisplay = "omitted"
+)
 
 // Effort is the adaptive-thinking depth enum. Honored by Anthropic on
 // Opus 4.6+ via the top-level `output_config.effort` field. Empty
