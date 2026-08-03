@@ -6,6 +6,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`openai_responses`: assistant tool calls are now replayed on the wire.**
+  The assistant case dropped `ToolCallBlock` on the assumption that tool
+  calls round-trip server-side via item ids — which only holds with
+  `previous_response_id`. A stateless request rebuilds the input array from
+  scratch, so the `function_call_output` emitted for the tool result had no
+  matching `function_call` and the API returned
+  `400 No tool call found for function call output with call_id …`, breaking
+  every multi-turn tool loop on its first tool call. Each `ToolCallBlock`
+  now emits a `function_call` input item (`call_id` / `name` / `arguments`)
+  ahead of its output, and an assistant turn that is *only* tool calls emits
+  those items instead of nothing. The item `id` is deliberately omitted so
+  the API's function-call / reasoning-item pairing validation isn't
+  triggered. `ThinkingBlock` is still dropped on send — replaying reasoning
+  needs the original reasoning item (id + `encrypted_content`) or
+  `previous_response_id`, neither of which this provider captures, so
+  thinking continuity across tool calls is lost. Fixes [#42].
+
+[#42]: https://github.com/amit-timalsina/pi-llm-go/issues/42
+
 ## [1.1.0] - 2026-07-21
 
 ### Added

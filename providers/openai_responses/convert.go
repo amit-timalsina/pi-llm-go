@@ -70,14 +70,17 @@ type reasoningOpts struct {
 }
 
 // inputItem is one entry in the Responses API input array. Items can be
-// messages (with role+content), function call outputs (tool results), or
-// other types. We emit message + function_call_output here.
+// messages (with role+content), function calls (replayed assistant tool
+// calls), function call outputs (tool results), or other types. We emit
+// message + function_call + function_call_output here.
 type inputItem struct {
-	Type    string             `json:"type"`              // "message" | "function_call_output"
-	Role    string             `json:"role,omitempty"`    // for message: "user" | "assistant" | "system"
-	Content []inputContentPart `json:"content,omitempty"` // for message
-	CallID  string             `json:"call_id,omitempty"` // for function_call_output
-	Output  string             `json:"output,omitempty"`  // for function_call_output
+	Type      string             `json:"type"`                // "message" | "function_call" | "function_call_output"
+	Role      string             `json:"role,omitempty"`      // for message: "user" | "assistant" | "system"
+	Content   []inputContentPart `json:"content,omitempty"`   // for message
+	CallID    string             `json:"call_id,omitempty"`   // for function_call, function_call_output
+	Name      string             `json:"name,omitempty"`      // for function_call
+	Arguments string             `json:"arguments,omitempty"` // for function_call: JSON-encoded object
+	Output    string             `json:"output,omitempty"`    // for function_call_output
 }
 
 // inputContentPart is one piece of a message's content. Type indicates the
@@ -158,8 +161,9 @@ func buildRequestBody(req llm.Request, effort ReasoningEffort, includeReasoningS
 }
 
 // convertOutgoingMessage maps a llm.Message into one or more inputItems.
-// Tool-result messages expand into one function_call_output per
-// ToolResultBlock.
+// Assistant messages expand into message items for text plus one
+// function_call per ToolCallBlock; tool-result messages expand into one
+// function_call_output per ToolResultBlock.
 //
 // ImageBlock is allowed only on user-role messages. Assistant- and
 // tool-role ImageBlocks are rejected at this boundary.
@@ -246,28 +250,55 @@ func convertOutgoingMessage(m llm.Message) ([]inputItem, error) {
 		}}, nil
 
 	case llm.RoleAssistant:
-		// Replayed assistant text only — tool calls round-trip via the API
-		// item ids on the server. Thinking blocks are not currently
-		// round-tripped on the Responses API in this provider.
+		// Text replays as message items, each ToolCallBlock as its own
+		// function_call item, in block order — the input array is rebuilt from
+		// scratch on every request, so a function_call_output is rejected
+		// unless the call that produced it is replayed too. The item `id` is
+		// deliberately omitted: the API only enforces function-call /
+		// reasoning-item pairing when ids are present.
+		//
+		// ThinkingBlock is dropped on send. Replaying reasoning needs the
+		// original reasoning item (id + encrypted_content) or
+		// previous_response_id, neither of which this provider captures, so
+		// thinking continuity across tool calls is lost.
+		var out []inputItem
 		var sb strings.Builder
+		flushText := func() {
+			if sb.Len() == 0 {
+				return
+			}
+			out = append(out, inputItem{
+				Type: "message",
+				Role: "assistant",
+				Content: []inputContentPart{
+					{Type: "output_text", Text: sb.String()},
+				},
+			})
+			sb.Reset()
+		}
 		for _, b := range m.Content {
-			if tb, ok := b.(llm.TextBlock); ok {
+			switch v := b.(type) {
+			case llm.TextBlock:
 				if sb.Len() > 0 {
 					sb.WriteString("\n")
 				}
-				sb.WriteString(tb.Text)
+				sb.WriteString(v.Text)
+			case llm.ToolCallBlock:
+				flushText()
+				args := string(v.Arguments)
+				if args == "" {
+					args = "{}"
+				}
+				out = append(out, inputItem{
+					Type:      "function_call",
+					CallID:    v.ID,
+					Name:      v.Name,
+					Arguments: args,
+				})
 			}
 		}
-		if sb.Len() == 0 {
-			return nil, nil
-		}
-		return []inputItem{{
-			Type: "message",
-			Role: "assistant",
-			Content: []inputContentPart{
-				{Type: "output_text", Text: sb.String()},
-			},
-		}}, nil
+		flushText()
+		return out, nil
 
 	case llm.RoleTool:
 		var out []inputItem
