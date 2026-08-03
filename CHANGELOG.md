@@ -6,6 +6,32 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-03
+
+### Fixed
+
+- **`openai_responses`: assistant tool calls are now replayed on the wire.**
+  The assistant case dropped `ToolCallBlock` on the assumption that tool
+  calls round-trip server-side via item ids — which only holds with
+  `previous_response_id`. A stateless request rebuilds the input array from
+  scratch, so the `function_call_output` emitted for the tool result had no
+  matching `function_call` and the API returned
+  `400 No tool call found for function call output with call_id …`, breaking
+  every multi-turn tool loop on its first tool call. Each `ToolCallBlock`
+  now emits a `function_call` input item (`call_id` / `name` / `arguments`)
+  ahead of its output, and an assistant turn that is *only* tool calls emits
+  those items instead of nothing. The item `id` is deliberately omitted so
+  the API's function-call / reasoning-item pairing validation isn't
+  triggered. `ThinkingBlock` is still dropped on send — replaying reasoning
+  needs the original reasoning item (id + `encrypted_content`) or
+  `previous_response_id`, neither of which this provider captures, so
+  thinking continuity across tool calls is lost. Fixes [#42].
+
+- `examples/openai_responses` gains `-tools` (runs a multi-turn tool loop
+  against a live endpoint) and `-model`.
+
+[#42]: https://github.com/amit-timalsina/pi-llm-go/issues/42
+
 ## [1.1.0] - 2026-07-21
 
 ### Added
@@ -707,7 +733,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.2...v1.0.0
 [0.11.2]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.1...v0.11.2

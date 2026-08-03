@@ -278,6 +278,108 @@ func TestStreamRequestBodyShape(t *testing.T) {
 	}
 }
 
+// TestStreamToolLoopReplayShape pins the second-turn input array of a tool
+// loop: the assistant's tool call must be replayed as a function_call item
+// ahead of its function_call_output, or the API rejects the request.
+func TestStreamToolLoopReplayShape(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model: "gpt-5.4-mini",
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "add 137 and 84"}}},
+			{Role: llm.RoleAssistant, Content: []llm.Block{
+				llm.ThinkingBlock{Thinking: "sum them"},
+				llm.TextBlock{Text: "Adding."},
+				llm.ToolCallBlock{ID: "call_abc", Name: "add", Arguments: json.RawMessage(`{"a":137,"b":84}`)},
+			}},
+			{Role: llm.RoleTool, Content: []llm.Block{
+				llm.ToolResultBlock{ToolCallID: "call_abc", Content: "221"},
+			}},
+		},
+		Tools: []llm.Tool{{Name: "add", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	var body struct {
+		Input []map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(fs.lastBody, &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	var types []string
+	for _, it := range body.Input {
+		types = append(types, it["type"].(string))
+	}
+	want := []string{"message", "message", "function_call", "function_call_output"}
+	if strings.Join(types, ",") != strings.Join(want, ",") {
+		t.Fatalf("input types=%v, want %v", types, want)
+	}
+	call := body.Input[2]
+	if call["call_id"] != "call_abc" || call["name"] != "add" {
+		t.Errorf("function_call identity wrong: %+v", call)
+	}
+	if call["arguments"] != `{"a":137,"b":84}` {
+		t.Errorf("function_call arguments=%v", call["arguments"])
+	}
+	if _, ok := call["id"]; ok {
+		t.Errorf("function_call must not carry an item id: %+v", call)
+	}
+	if body.Input[3]["call_id"] != "call_abc" {
+		t.Errorf("function_call_output call_id=%v", body.Input[3]["call_id"])
+	}
+	if body.Input[1]["role"] != "assistant" {
+		t.Errorf("assistant text item=%+v", body.Input[1])
+	}
+}
+
+// TestStreamAssistantToolCallOnly covers an assistant turn with no text: it
+// emits the function_call item and no empty message item.
+func TestStreamAssistantToolCallOnly(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model: "gpt-5.4-mini",
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "ping"}}},
+			{Role: llm.RoleAssistant, Content: []llm.Block{
+				llm.ToolCallBlock{ID: "call_xyz", Name: "ping"},
+			}},
+			{Role: llm.RoleTool, Content: []llm.Block{
+				llm.ToolResultBlock{ToolCallID: "call_xyz", Content: "pong"},
+			}},
+		},
+		Tools: []llm.Tool{{Name: "ping", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	var body struct {
+		Input []map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(fs.lastBody, &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Input) != 3 {
+		t.Fatalf("input len=%d, want 3: %+v", len(body.Input), body.Input)
+	}
+	if body.Input[1]["type"] != "function_call" {
+		t.Fatalf("input[1]=%+v", body.Input[1])
+	}
+	if body.Input[1]["arguments"] != "{}" {
+		t.Errorf("empty Arguments must serialize as {}, got %v", body.Input[1]["arguments"])
+	}
+}
+
 func TestStreamHTTPError(t *testing.T) {
 	fs := &fakeServer{statusCode: http.StatusUnauthorized, statusBody: `{"error":"bad key"}`}
 	srv := httptest.NewServer(fs.handler())
