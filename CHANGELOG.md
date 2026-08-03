@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-03
+
 ### Fixed
 
 - **`openai_responses`: assistant tool calls are now replayed on the wire.**
@@ -24,6 +26,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   needs the original reasoning item (id + `encrypted_content`) or
   `previous_response_id`, neither of which this provider captures, so
   thinking continuity across tool calls is lost. Fixes [#42].
+
+- `examples/openai_responses` gains `-tools` (runs a multi-turn tool loop
+  against a live endpoint) and `-model`.
 
 [#42]: https://github.com/amit-timalsina/pi-llm-go/issues/42
 
@@ -728,7 +733,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.2...v1.0.0
 [0.11.2]: https://github.com/amit-timalsina/pi-llm-go/compare/v0.11.1...v0.11.2
