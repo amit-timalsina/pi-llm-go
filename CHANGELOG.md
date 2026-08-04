@@ -6,6 +6,47 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`Usage.ReasoningTokens`** — the portion of `OutputTokens` spent on
+  reasoning that isn't returned as visible output. On a reasoning model
+  this is the majority of output spend (516 of 913 output tokens in the
+  reported case), and it was previously indistinguishable from completion
+  tokens, so cost attribution and budget comparisons couldn't decompose it.
+
+  It is a **subset** of `OutputTokens`, not a sibling — that's how every
+  provider nests it on the wire, and keeping it nested means `OutputTokens`
+  totals don't shift under existing callers. Summing the two double-counts;
+  `ApplyPricing` deliberately doesn't price it for that reason.
+
+  Populated by `openai_responses`
+  (`output_tokens_details.reasoning_tokens`), `openai`
+  (`completion_tokens_details.reasoning_tokens`), and `gemini`
+  (`thoughtsTokenCount`, which was already summed into `OutputTokens`).
+  Zero on Anthropic — extended-thinking tokens bill as output but the
+  Messages API reports no breakdown for them. Optional additive `Usage`
+  field → minor release. Closes [#44].
+
+### Fixed
+
+- **`openai_responses` now surfaces cached-input counters.** The
+  `response.completed` decoder read only the three top-level token counts,
+  dropping `input_tokens_details.cached_tokens` and `cache_write_tokens`;
+  they now populate `Usage.CacheReadTokens` / `Usage.CacheWriteTokens`.
+- **`openai` (Chat Completions) now surfaces cached-input counters** from
+  `prompt_tokens_details.cached_tokens`.
+- **`Usage.CacheReadTokens` doc comment corrected.** It claimed "OpenAI's
+  cache is opaque (no telemetry)", which is no longer true on either
+  OpenAI surface — verified live: a repeated 4012-token prefix reports
+  `cached_tokens: 3840` on the second call.
+- **`IncludeReasoningSummary` doc comment** now records that a summary is
+  not guaranteed even when the request is accepted — the API can return
+  zero summary parts on a response that spent reasoning tokens, so
+  `EventThinking*` may never fire. Account- or model-level gating, not a
+  client error.
+
+[#44]: https://github.com/amit-timalsina/pi-llm-go/issues/44
+
 ## [1.1.1] - 2026-08-03
 
 ### Fixed

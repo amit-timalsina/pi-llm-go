@@ -107,6 +107,9 @@ func ComputeCost(usage Usage, model string) (Cost, error) {
 // caller-supplied Pricing rather than a model lookup. Useful when the
 // caller maintains their own pricing source (e.g. a database, models.dev
 // poll) outside the built-in table.
+//
+// Usage.ReasoningTokens is deliberately not priced — it is a subset of
+// OutputTokens, so a term for it would double-count.
 func ApplyPricing(usage Usage, p Pricing) Cost {
 	c := Cost{
 		Input:     perMillion(usage.InputTokens, p.Input),

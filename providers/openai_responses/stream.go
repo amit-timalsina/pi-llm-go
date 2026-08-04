@@ -313,9 +313,16 @@ func (d *streamDecoder) handleCompleted(data string, yield func(llm.StreamEvent,
 				Reason string `json:"reason"`
 			} `json:"incomplete_details"`
 			Usage *struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
-				TotalTokens  int `json:"total_tokens"`
+				InputTokens        int `json:"input_tokens"`
+				OutputTokens       int `json:"output_tokens"`
+				TotalTokens        int `json:"total_tokens"`
+				InputTokensDetails struct {
+					CachedTokens     int `json:"cached_tokens"`
+					CacheWriteTokens int `json:"cache_write_tokens"`
+				} `json:"input_tokens_details"`
+				OutputTokensDetails struct {
+					ReasoningTokens int `json:"reasoning_tokens"`
+				} `json:"output_tokens_details"`
 			} `json:"usage"`
 		} `json:"response"`
 	}
@@ -336,6 +343,9 @@ func (d *streamDecoder) handleCompleted(data string, yield func(llm.StreamEvent,
 		usage.InputTokens = ev.Response.Usage.InputTokens
 		usage.OutputTokens = ev.Response.Usage.OutputTokens
 		usage.TotalTokens = ev.Response.Usage.TotalTokens
+		usage.ReasoningTokens = ev.Response.Usage.OutputTokensDetails.ReasoningTokens
+		usage.CacheReadTokens = ev.Response.Usage.InputTokensDetails.CachedTokens
+		usage.CacheWriteTokens = ev.Response.Usage.InputTokensDetails.CacheWriteTokens
 		if usage.TotalTokens == 0 {
 			usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 		}

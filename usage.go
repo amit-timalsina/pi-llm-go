@@ -30,12 +30,20 @@ package llm
 // client-side), so the aggregate stays consistent with Anthropic's
 // billing even if our enum drifts behind the API.
 type Usage struct {
-	InputTokens  int
+	InputTokens int
+
+	// OutputTokens is every generated token, INCLUDING ReasoningTokens.
 	OutputTokens int
 
+	// ReasoningTokens is the part of OutputTokens spent on reasoning that
+	// isn't returned as visible output — a SUBSET, not a sibling: summing
+	// the two double-counts. Zero on Anthropic (thinking bills as output
+	// with no breakdown reported) and on non-reasoning models.
+	ReasoningTokens int
+
 	// CacheReadTokens is the total tokens served from a cache hit on
-	// this request. Anthropic populates this; OpenAI's cache is
-	// opaque (no telemetry); Gemini does not yet surface it.
+	// this request. Anthropic and both OpenAI surfaces populate it;
+	// Gemini does not yet surface it.
 	CacheReadTokens int
 
 	// CacheWriteTokens is the total tokens written to a cache on

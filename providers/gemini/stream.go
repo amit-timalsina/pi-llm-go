@@ -248,6 +248,7 @@ func (a *streamAccumulator) finalize() []llm.StreamEvent {
 	if a.lastUsage != nil {
 		usage.InputTokens = a.lastUsage.PromptTokenCount
 		usage.OutputTokens = a.lastUsage.CandidatesTokenCount + a.lastUsage.ThoughtsTokenCount
+		usage.ReasoningTokens = a.lastUsage.ThoughtsTokenCount
 		usage.TotalTokens = a.lastUsage.TotalTokenCount
 		// Gemini exposes prompt-cache hits via cachedContentTokenCount
 		// on the wire; not surfaced at v0.4.0 — Gemini's caching is

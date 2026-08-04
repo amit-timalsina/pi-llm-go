@@ -380,6 +380,74 @@ func TestStreamAssistantToolCallOnly(t *testing.T) {
 	}
 }
 
+// reasoningUsagePayload carries a live gpt-5.6-sol usage block, where 516 of
+// 913 output tokens are reasoning.
+const reasoningUsagePayload = `event: response.created
+data: {"type":"response.created","response":{"id":"resp_4","model":"gpt-5.6-sol","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_4","status":"in_progress","role":"assistant","content":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","output_index":0,"delta":"42"}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","output_index":0,"text":"42"}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_4","model":"gpt-5.6-sol","status":"completed","usage":{"input_tokens":32,"input_tokens_details":{"cached_tokens":16,"cache_write_tokens":8},"output_tokens":913,"output_tokens_details":{"reasoning_tokens":516},"total_tokens":945}}}
+
+`
+
+func TestStreamReasoningUsage(t *testing.T) {
+	fs := &fakeServer{payload: reasoningUsagePayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	msg, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    "gpt-5.6-sol",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if msg.Usage.ReasoningTokens != 516 {
+		t.Errorf("Usage.ReasoningTokens=%d, want 516", msg.Usage.ReasoningTokens)
+	}
+	if msg.Usage.OutputTokens != 913 {
+		t.Errorf("Usage.OutputTokens=%d, want 913 (reasoning stays nested)", msg.Usage.OutputTokens)
+	}
+	if msg.Usage.CacheReadTokens != 16 {
+		t.Errorf("Usage.CacheReadTokens=%d, want 16", msg.Usage.CacheReadTokens)
+	}
+	if msg.Usage.CacheWriteTokens != 8 {
+		t.Errorf("Usage.CacheWriteTokens=%d, want 8", msg.Usage.CacheWriteTokens)
+	}
+}
+
+// Non-reasoning model: the details blocks are absent from the wire.
+func TestStreamUsageWithoutDetails(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	msg, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    "gpt-5.4-mini",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if msg.Usage.ReasoningTokens != 0 || msg.Usage.CacheReadTokens != 0 || msg.Usage.CacheWriteTokens != 0 {
+		t.Errorf("want zero details, got %+v", msg.Usage)
+	}
+	if msg.Usage.OutputTokens != 3 {
+		t.Errorf("Usage.OutputTokens=%d, want 3", msg.Usage.OutputTokens)
+	}
+}
+
 func TestStreamHTTPError(t *testing.T) {
 	fs := &fakeServer{statusCode: http.StatusUnauthorized, statusBody: `{"error":"bad key"}`}
 	srv := httptest.NewServer(fs.handler())

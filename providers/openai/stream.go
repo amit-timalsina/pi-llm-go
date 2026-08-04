@@ -35,9 +35,15 @@ type chunk struct {
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+		PromptTokens        int `json:"prompt_tokens"`
+		CompletionTokens    int `json:"completion_tokens"`
+		TotalTokens         int `json:"total_tokens"`
+		PromptTokensDetails struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+		CompletionTokensDetails struct {
+			ReasoningTokens int `json:"reasoning_tokens"`
+		} `json:"completion_tokens_details"`
 	} `json:"usage"`
 }
 
@@ -107,9 +113,11 @@ func (d *streamDecoder) decode(r io.Reader, yield func(llm.StreamEvent, error) b
 
 		if c.Usage != nil {
 			d.usage = llm.Usage{
-				InputTokens:  c.Usage.PromptTokens,
-				OutputTokens: c.Usage.CompletionTokens,
-				TotalTokens:  c.Usage.TotalTokens,
+				InputTokens:     c.Usage.PromptTokens,
+				OutputTokens:    c.Usage.CompletionTokens,
+				TotalTokens:     c.Usage.TotalTokens,
+				ReasoningTokens: c.Usage.CompletionTokensDetails.ReasoningTokens,
+				CacheReadTokens: c.Usage.PromptTokensDetails.CachedTokens,
 			}
 		}
 
