@@ -7,6 +7,27 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v1.2.0** shipped 2026-08-04 — `Usage.ReasoningTokens`, nested inside
+  `OutputTokens` as on the wire. Closes #44 — on a reasoning model the
+  majority of output spend (516/913 in the reported case) was
+  indistinguishable from completion tokens, so cost attribution couldn't
+  decompose it. Populated on OpenAI Responses / Chat Completions /
+  Gemini; zero on Anthropic, which bills thinking as output but reports
+  no breakdown. Also fixes both OpenAI decoders dropping
+  `{input,prompt}_tokens_details`, so cached-input telemetry now lands
+  in `CacheReadTokens` / `CacheWriteTokens`. Live-verified against the
+  real API (field paths + end-to-end parsing).
+- **v1.1.1** shipped 2026-08-03 — Fix `openai_responses` dropping
+  assistant `ToolCallBlock`s on replay. Closes #42 — a stateless
+  multi-turn tool loop 400'd on its first tool result because the
+  `function_call_output` had no preceding `function_call`, and for
+  `gpt-5.*` reasoning models with tools the Responses surface is the
+  only path. Live-smoked on `gpt-5.6-sol` (single call, `-reasoning`,
+  and two calls in one turn).
+- **v1.1.0** shipped 2026-07-21 — `ThinkingConfig.Display` for
+  observable adaptive thinking. Closes #40 — on Opus 4.7+ the provider
+  default is signature-only thinking blocks with empty text, so
+  `EventThinkingDelta`-based capture recorded nothing.
 - **v1.0.0** shipped 2026-06-06 — First stable release. The public API
   has been additive-only since v0.2.0 (no breaking churn) and dogfooded
   in production at Noumenal (DSA + AA) for ~4 weeks. From here the

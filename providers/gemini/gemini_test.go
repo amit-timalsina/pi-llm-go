@@ -275,8 +275,8 @@ func TestStream_ToolCall_Gemini2NoID(t *testing.T) {
 }
 
 // TestStream_Thinking verifies thought parts (`thought=true`) emit
-// ThinkingBlock content and that the thoughtsTokenCount is rolled
-// into Usage.OutputTokens.
+// ThinkingBlock content and that thoughtsTokenCount lands in
+// Usage.ReasoningTokens, rolled into Usage.OutputTokens.
 func TestStream_Thinking(t *testing.T) {
 	fs := &fakeServer{payload: thinkingPayload}
 	srv := httptest.NewServer(fs.handler())
@@ -312,6 +312,13 @@ func TestStream_Thinking(t *testing.T) {
 	// thoughtsTokenCount (4) + candidatesTokenCount (3) = 7 output tokens.
 	if msg.Usage.OutputTokens != 7 {
 		t.Errorf("Usage.OutputTokens=%d, want 7 (3 candidates + 4 thoughts)", msg.Usage.OutputTokens)
+	}
+	if msg.Usage.ReasoningTokens != 4 {
+		t.Errorf("Usage.ReasoningTokens=%d, want 4 (thoughtsTokenCount)", msg.Usage.ReasoningTokens)
+	}
+	if msg.Usage.ReasoningTokens > msg.Usage.OutputTokens {
+		t.Errorf("ReasoningTokens=%d must be a subset of OutputTokens=%d",
+			msg.Usage.ReasoningTokens, msg.Usage.OutputTokens)
 	}
 }
 

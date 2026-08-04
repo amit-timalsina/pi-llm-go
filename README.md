@@ -29,7 +29,9 @@ Requires Go 1.23+ (for `iter.Seq2`).
 | Video input | reject at wire | reject at wire | reject at wire | ✅ native |
 | Extended thinking | ✅ | — | ✅ (reasoning summaries) | ✅ |
 | Prompt caching (5m + 1h tier) | ✅ | automatic | automatic | single-TTL |
+| Cached-input `Usage` telemetry | ✅ | ✅ | ✅ | — |
 | Per-TTL cache-write Usage breakdown | ✅ | — | — | — |
+| Reasoning-token `Usage` breakdown | — (not reported) | ✅ | ✅ | ✅ |
 | `CountTokens` (no-spend pre-flight) | ✅ | — (no API) | — (no API) | ✅ |
 | Cost projection helper | ✅ | ✅ | ✅ | ✅ |
 | Retry middleware (`Options.Retry`) | ✅ | ✅ | ✅ | ✅ |
@@ -277,11 +279,19 @@ Every completion surfaces a typed `Usage` value on the final `EventMessageEnd` (
 
 ```go
 msg, _ := llm.Complete(ctx, provider, req)
-fmt.Printf("in=%d out=%d cache_write=%d (5m=%d, 1h=%d) cache_read=%d total=%d\n",
-    msg.Usage.InputTokens, msg.Usage.OutputTokens,
+fmt.Printf("in=%d out=%d (reasoning=%d) cache_write=%d (5m=%d, 1h=%d) cache_read=%d total=%d\n",
+    msg.Usage.InputTokens, msg.Usage.OutputTokens, msg.Usage.ReasoningTokens,
     msg.Usage.CacheWriteTokens, msg.Usage.CacheWrite5mTokens, msg.Usage.CacheWrite1hTokens,
     msg.Usage.CacheReadTokens, msg.Usage.TotalTokens)
 ```
+
+`ReasoningTokens` is the slice of `OutputTokens` spent on reasoning that never comes back as visible output — on a reasoning model it is routinely the majority of output spend, and it bills at the output rate. It is a **subset** of `OutputTokens`, matching how providers nest it on the wire, so adding the two double-counts:
+
+```go
+visible := msg.Usage.OutputTokens - msg.Usage.ReasoningTokens
+```
+
+OpenAI Responses, OpenAI Chat Completions, and Gemini populate it. Anthropic leaves it at zero: extended-thinking tokens bill as output there, but the Messages API reports no breakdown for them.
 
 `CacheWrite5mTokens` and `CacheWrite1hTokens` are Anthropic-specific — they break `CacheWriteTokens` down by TTL tier so consumers can detect silent 5min fallback when `CacheRetention=long` was requested but the model didn't honor the extended TTL:
 
@@ -293,7 +303,7 @@ if req.CacheRetention == llm.CacheRetentionLong &&
 }
 ```
 
-OpenAI and Gemini leave the TTL-breakdown fields at zero (their cache surfaces are opaque or single-TTL).
+OpenAI and Gemini leave the **TTL-breakdown** fields at zero — neither exposes a per-tier split. `CacheReadTokens` itself is populated on both OpenAI surfaces (from `{input,prompt}_tokens_details.cached_tokens`), and `CacheWriteTokens` on OpenAI Responses; Gemini does not yet surface either.
 
 `llm.ComputeCost` applies a built-in pricing table to a `Usage` value and returns a dollar breakdown:
 

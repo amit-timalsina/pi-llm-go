@@ -307,3 +307,39 @@ func TestStreamHTTPError_RetryAfterMsFromOpenAI(t *testing.T) {
 		t.Errorf("RetryAfter=%v, want 1.5s (from retry-after-ms: 1500)", apiErr.RetryAfter)
 	}
 }
+
+// reasoningUsagePayload nests reasoning_tokens under
+// completion_tokens_details and cached_tokens under prompt_tokens_details.
+const reasoningUsagePayload = `data: {"id":"chatcmpl-2","model":"gpt-5.5","choices":[{"index":0,"delta":{"role":"assistant","content":"42"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-2","model":"gpt-5.5","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-2","model":"gpt-5.5","choices":[],"usage":{"prompt_tokens":40,"prompt_tokens_details":{"cached_tokens":24},"completion_tokens":600,"completion_tokens_details":{"reasoning_tokens":448},"total_tokens":640}}
+
+data: [DONE]
+
+`
+
+func TestStreamReasoningUsage(t *testing.T) {
+	fs := &fakeServer{payload: reasoningUsagePayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	final, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    "gpt-5.5",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if final.Usage.ReasoningTokens != 448 {
+		t.Errorf("Usage.ReasoningTokens=%d, want 448", final.Usage.ReasoningTokens)
+	}
+	if final.Usage.OutputTokens != 600 {
+		t.Errorf("Usage.OutputTokens=%d, want 600 (reasoning stays nested)", final.Usage.OutputTokens)
+	}
+	if final.Usage.CacheReadTokens != 24 {
+		t.Errorf("Usage.CacheReadTokens=%d, want 24", final.Usage.CacheReadTokens)
+	}
+}

@@ -47,7 +47,9 @@ Sibling repo: [`pi-agent-go`](https://github.com/amit-timalsina/pi-agent-go) —
 
 ## Releases
 
-Tag `vX.Y.Z` (signed). GitHub Actions workflow `release.yml` picks up the tag, copies the matching CHANGELOG section into the release notes, and publishes.
+Tag `vX.Y.Z` (annotated). GitHub Actions workflow `release.yml` picks up the tag, copies the matching CHANGELOG section into the release notes, and publishes — so the version's CHANGELOG section must land **before** the tag.
+
+The release PR also updates **ROADMAP.md's shipped-log** (newest first: version, date, what, `Closes #N`) and any doc whose claims the change invalidates — README capability matrix + prose, `llms.txt`, affected examples. v1.1.0 and v1.1.1 shipped without roadmap entries; backfilling later is worse than a one-line addition at release time.
 
 Bumping the pi-agent-go dependency on pi-llm-go is a separate PR in that repo with its own changelog entry.
 

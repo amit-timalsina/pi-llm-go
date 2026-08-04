@@ -76,6 +76,10 @@ type Options struct {
 	// IncludeReasoningSummary, when true, requests reasoning summary
 	// streaming (response.reasoning_summary_* events). The summary is
 	// surfaced as llm.ThinkingBlock content. Honored by reasoning models.
+	// A summary is not guaranteed even when the request is accepted: the
+	// API can return zero summary parts on a response that spent reasoning
+	// tokens (Usage.ReasoningTokens > 0, no EventThinking*) — account- or
+	// model-level gating, not a client error.
 	IncludeReasoningSummary bool
 
 	// Retry, when non-nil, configures provider-side retry on retriable
