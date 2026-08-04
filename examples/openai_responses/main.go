@@ -191,8 +191,9 @@ func main() {
 		case llm.EventTextDelta:
 			fmt.Print(e.Delta)
 		case llm.EventMessageEnd:
-			fmt.Printf("\n\n[stop=%s in/out/total=%d/%d/%d]\n",
-				e.StopReason, e.Usage.InputTokens, e.Usage.OutputTokens, e.Usage.TotalTokens)
+			fmt.Printf("\n\n[stop=%s in/out/total=%d/%d/%d reasoning=%d cached=%d]\n",
+				e.StopReason, e.Usage.InputTokens, e.Usage.OutputTokens, e.Usage.TotalTokens,
+				e.Usage.ReasoningTokens, e.Usage.CacheReadTokens)
 		}
 	}
 }

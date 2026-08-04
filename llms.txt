@@ -100,6 +100,20 @@ req.CacheRetention = llm.CacheRetentionLong  // 1h TTL on Anthropic
 
 msg, _ := llm.Complete(ctx, p, req)
 fmt.Printf("cache_read=%d cache_write_1h=%d\n", msg.Usage.CacheReadTokens, msg.Usage.CacheWrite1hTokens)
+// CacheReadTokens is also populated on both OpenAI surfaces; the per-TTL
+// CacheWrite5m/1h split is Anthropic-only.
+```
+
+### Reasoning-token accounting
+
+```go
+msg, _ := llm.Complete(ctx, p, req)
+// ReasoningTokens is a SUBSET of OutputTokens (nested, as on the wire) —
+// summing them double-counts. Populated on OpenAI Responses, OpenAI Chat
+// Completions, and Gemini; zero on Anthropic, which bills thinking as
+// output but reports no breakdown.
+visible := msg.Usage.OutputTokens - msg.Usage.ReasoningTokens
+fmt.Printf("reasoning=%d visible=%d\n", msg.Usage.ReasoningTokens, visible)
 ```
 
 ### Pre-flight token counting
