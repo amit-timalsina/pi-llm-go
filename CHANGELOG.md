@@ -6,6 +6,37 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-04
+
+### Fixed
+
+- **`Accumulate` no longer panics on an unmatched `EventToolCallEnd`.** A
+  provider emitting `EventToolCallEnd` for a block that no
+  `EventToolCallStart` opened indexed past the end of `Content`, panicking
+  the host process — reachable through plain `llm.Complete`, no agent layer
+  required:
+
+  ```
+  panic: runtime error: index out of range [0] with length 0
+    accumulate.go:73 → llm.go:207 (Complete)
+  ```
+
+  The same hole had a silent second face: when the index was *in* range but
+  held another kind of block, the finished block was overwritten by a
+  nameless `ToolCallBlock`, destroying a completed text answer with no panic
+  and no error. Both are now rejected up front — a tool-call End is only
+  applied when the matching Start opened that block. Surfaced by
+  [pi-agent-go#40](https://github.com/amit-timalsina/pi-agent-go/issues/40).
+
+### Added
+
+- **`ErrMalformedStream`** (+ `IsMalformedStream` sugar) — the typed error
+  the above now returns instead of panicking or corrupting. Wraps
+  `ErrProvider`, so existing `errors.Is(err, ErrProvider)` callers keep
+  matching. Deliberately **not** retriable: `IsRetriable` ignores it,
+  because misordered events are a provider-implementation bug rather than a
+  transient fault. New exported sentinel + helper → minor release.
+
 ## [1.2.0] - 2026-08-04
 
 ### Added
@@ -776,7 +807,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.0.0...v1.1.0

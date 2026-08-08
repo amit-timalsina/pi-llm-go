@@ -157,6 +157,7 @@ for ev, err := range p.Stream(ctx, req) {
     case llm.IsServerError(err):       // other 5xx — retry, escalate if sustained
     case llm.IsContextLength(err):     // 400, prompt too long — truncate or route to longer-context model
     case llm.IsPolicyViolation(err):   // 400, safety/policy — do not retry
+    case llm.IsMalformedStream(err):   // provider broke Start→Delta→End ordering — not retriable
     case errors.Is(err, llm.ErrAuth):  // 401, 403 — caller bug
     }
     return err
