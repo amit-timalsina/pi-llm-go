@@ -170,3 +170,80 @@ func TestAccumulateSnapshotsAreIndependent(t *testing.T) {
 		t.Errorf("final snapshot text=%q", finalText.Text)
 	}
 }
+
+// Past Content's end used to panic; in range over another kind used to
+// clobber it silently.
+func TestAccumulateUnmatchedToolCallEnd(t *testing.T) {
+	cases := []struct {
+		name   string
+		events []llm.StreamEvent
+	}{
+		{
+			name: "index past end of content",
+			events: []llm.StreamEvent{
+				llm.EventMessageStart{Model: "m"},
+				llm.EventToolCallEnd{BlockIndex: 0, Arguments: json.RawMessage(`{"a":1}`)},
+			},
+		},
+		{
+			name: "index over a finished text block",
+			events: []llm.StreamEvent{
+				llm.EventMessageStart{Model: "m"},
+				llm.EventTextStart{BlockIndex: 0},
+				llm.EventTextDelta{BlockIndex: 0, Delta: "answer"},
+				llm.EventTextEnd{BlockIndex: 0},
+				llm.EventToolCallEnd{BlockIndex: 0, Arguments: json.RawMessage(`{"a":1}`)},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotErr error
+			var last *llm.Message
+			for msg, err := range llm.Accumulate(fromEvents(tc.events, nil)) {
+				last = msg
+				if err != nil {
+					gotErr = err
+					break
+				}
+			}
+			if gotErr == nil {
+				t.Fatalf("want ErrMalformedStream, got nil (message=%+v)", last)
+			}
+			if !errors.Is(gotErr, llm.ErrMalformedStream) {
+				t.Errorf("errors.Is(err, ErrMalformedStream)=false: %v", gotErr)
+			}
+			if !errors.Is(gotErr, llm.ErrProvider) {
+				t.Errorf("ErrMalformedStream must stay under ErrProvider: %v", gotErr)
+			}
+			if llm.IsRetriable(gotErr) {
+				t.Errorf("malformed stream must not be retriable: %v", gotErr)
+			}
+		})
+	}
+}
+
+func TestAccumulateWellFormedToolCallUnaffected(t *testing.T) {
+	events := []llm.StreamEvent{
+		llm.EventMessageStart{Model: "m"},
+		llm.EventToolCallStart{BlockIndex: 0, ID: "call_1", Name: "add"},
+		llm.EventToolCallDelta{BlockIndex: 0, Delta: `{"a":1}`},
+		llm.EventToolCallEnd{BlockIndex: 0, Arguments: json.RawMessage(`{"a":1}`)},
+		llm.EventMessageEnd{StopReason: llm.StopReasonToolUse},
+	}
+	var final *llm.Message
+	for msg, err := range llm.Accumulate(fromEvents(events, nil)) {
+		if err != nil {
+			t.Fatalf("Accumulate: %v", err)
+		}
+		final = msg
+	}
+	tc, ok := final.Content[0].(llm.ToolCallBlock)
+	if !ok {
+		t.Fatalf("Content[0]=%T, want ToolCallBlock", final.Content[0])
+	}
+	if tc.ID != "call_1" || tc.Name != "add" || string(tc.Arguments) != `{"a":1}` {
+		t.Errorf("ToolCallBlock=%+v", tc)
+	}
+}

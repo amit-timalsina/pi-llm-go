@@ -215,12 +215,15 @@ ErrRateLimit        // 429
 ErrInvalidRequest   // other 4xx (parent of the next two)
 ├─ ErrContextLength // prompt / max_tokens exceeds the model's window
 └─ ErrPolicyViolation // input rejected by content / safety policy
-ErrProvider         // generic provider problem (parent of the next two)
+ErrProvider         // generic provider problem (parent of the next three)
 ├─ ErrServerError   // 5xx (excluding 529)
-└─ ErrOverloaded    // 529 (Anthropic infra overload)
+├─ ErrOverloaded    // 529 (Anthropic infra overload)
+└─ ErrMalformedStream // event stream broke the Start→Delta→End contract
 ```
 
-`ErrServerError` and `ErrOverloaded` both wrap `ErrProvider`; `ErrContextLength` and `ErrPolicyViolation` both wrap `ErrInvalidRequest`. Legacy `errors.Is(err, ErrProvider)` and `errors.Is(err, ErrInvalidRequest)` callers keep matching the full subtree.
+`ErrServerError`, `ErrOverloaded` and `ErrMalformedStream` all wrap `ErrProvider`; `ErrContextLength` and `ErrPolicyViolation` both wrap `ErrInvalidRequest`. Legacy `errors.Is(err, ErrProvider)` and `errors.Is(err, ErrInvalidRequest)` callers keep matching the full subtree.
+
+`ErrMalformedStream` is the one sentinel that isn't an HTTP failure: `Accumulate` (and therefore `Complete`) returns it when a provider emits an `EventToolCallEnd` for a block no `EventToolCallStart` ever opened. It is deliberately **not** retriable — misordered events are usually a deterministic provider-implementation bug, not a transient fault.
 
 The finer 4xx sentinels are derived by inspecting the response body — provider error schemas don't carry a canonical machine-readable category for "context too long" vs "policy violation," so pi-llm-go pattern-matches the message text. Patterns cover Anthropic / OpenAI / Gemini current shapes. For structured per-provider decoding, branch on `apiErr.Body` directly.
 

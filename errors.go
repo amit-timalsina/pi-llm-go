@@ -16,7 +16,8 @@ import (
 //
 //	ErrProvider           // generic "something provider-side broke"
 //	├─ ErrServerError     // HTTP 5xx (excluding 529)
-//	└─ ErrOverloaded      // HTTP 529 (Anthropic infra overload)
+//	├─ ErrOverloaded      // HTTP 529 (Anthropic infra overload)
+//	└─ ErrMalformedStream // event stream violates the Start→Delta→End contract
 //
 //	ErrInvalidRequest     // HTTP 4xx (other than 401/403/429)
 //	├─ ErrContextLength   // prompt/output exceeds context window
@@ -52,6 +53,11 @@ var (
 	// practice. Recommended consumer policy: do NOT retry; surface
 	// to the user or route through a moderation step.
 	ErrPolicyViolation = fmt.Errorf("%w: content policy violation", ErrInvalidRequest)
+	// ErrMalformedStream signals that a provider's event stream broke the
+	// Start→Delta→End block contract — e.g. an EventToolCallEnd for a block
+	// no EventToolCallStart opened. Deliberately not retriable: misordered
+	// events are a provider-implementation bug, not a transient fault.
+	ErrMalformedStream = fmt.Errorf("%w: malformed event stream", ErrProvider)
 )
 
 // APIError wraps a non-2xx HTTP response from a provider. The Inner field
@@ -241,6 +247,10 @@ func IsContextLength(err error) bool { return errors.Is(err, ErrContextLength) }
 // IsPolicyViolation reports whether err is a content-policy rejection.
 // Sugar for errors.Is(err, ErrPolicyViolation).
 func IsPolicyViolation(err error) bool { return errors.Is(err, ErrPolicyViolation) }
+
+// IsMalformedStream reports whether err is a stream-contract violation.
+// Sugar for errors.Is(err, ErrMalformedStream).
+func IsMalformedStream(err error) bool { return errors.Is(err, ErrMalformedStream) }
 
 // ParseRetryAfter extracts a wait hint from a provider response's
 // Retry-After / retry-after-ms headers. Returns 0 if no header is

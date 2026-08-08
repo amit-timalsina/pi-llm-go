@@ -70,6 +70,14 @@ func Accumulate(events iter.Seq2[StreamEvent, error]) iter.Seq2[*Message, error]
 					b.WriteString(e.Delta)
 				}
 			case EventToolCallEnd:
+				// A builder exists only if Start opened this block — without it
+				// the index may be past Content's end or hold another kind.
+				if _, ok := toolArgBuilders[e.BlockIndex]; !ok {
+					yield(snapshot(msg, textBuilders, thinkBuilders, toolArgBuilders),
+						fmt.Errorf("%w: EventToolCallEnd for block %d with no EventToolCallStart",
+							ErrMalformedStream, e.BlockIndex))
+					return
+				}
 				existing, _ := msg.Content[e.BlockIndex].(ToolCallBlock)
 				existing.Arguments = e.Arguments
 				msg.Content[e.BlockIndex] = existing

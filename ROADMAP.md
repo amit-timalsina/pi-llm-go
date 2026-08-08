@@ -7,6 +7,12 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v1.3.0** shipped 2026-08-04 — `ErrMalformedStream` + guard against an
+  unmatched `EventToolCallEnd` in `Accumulate`. Surfaced by
+  pi-agent-go#40, which reported the agent-level panic; the same hole sat
+  under plain `llm.Complete`, and had a silent second face where an
+  in-range End clobbered a finished text block into a nameless
+  `ToolCallBlock`. Not retriable by design.
 - **v1.2.0** shipped 2026-08-04 — `Usage.ReasoningTokens`, nested inside
   `OutputTokens` as on the wire. Closes #44 — on a reasoning model the
   majority of output spend (516/913 in the reported case) was
