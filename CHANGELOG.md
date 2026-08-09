@@ -6,6 +6,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Opaque part signatures on `TextBlock` and `ToolCallBlock`.** The new
+  optional `Signature` fields, populated through matching fields on
+  `EventTextEnd` and `EventToolCallEnd`, preserve provider-supplied reasoning
+  metadata without making the core API Gemini-specific. Existing providers
+  and callers see the zero value. Additive exported fields → minor release.
+
+### Fixed
+
+- **Gemini now captures and replays `thoughtSignature` metadata.** The
+  `generateContent` API is stateless, so a multi-step tool loop must return
+  each signature on the exact response part that carried it. Gemini 3
+  strictly validates current-turn function-call signatures; Gemini 2.5 puts
+  its function-calling signature on the first part and does not require it,
+  but replay still preserves reasoning continuity. Streaming also retains a
+  signature delivered in the final empty-text part without merging that
+  signed part into adjacent unsigned prose.
+
 ## [1.3.0] - 2026-08-04
 
 ### Fixed

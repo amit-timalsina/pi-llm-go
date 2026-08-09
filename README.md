@@ -140,7 +140,7 @@ See `examples/strict_tool_use` for the end-to-end pattern.
 - **Streaming-first.** `Stream()` returns `iter.Seq2[StreamEvent, error]` — Go 1.23 iterators, no callbacks, no goroutine leaks. `Complete()` is the synchronous helper for one-shot use.
 - **Sealed sum types.** `Block` and `StreamEvent` are interfaces with package-private marker methods. Type-switch exhaustively; the compiler tells you if you miss a case.
 - **Tool calling.** Declare tools on `Request.Tools`; receive `ToolCallBlock`s on the response; send `ToolResultBlock`s back. Pi-llm-go does not execute tools — that's [pi-agent-go](https://github.com/amit-timalsina/pi-agent-go)'s job.
-- **Extended thinking.** Set `Request.Thinking` and read `ThinkingBlock` content back. Two shapes on Anthropic: adaptive `ThinkingConfig{Effort: llm.EffortMedium}` (Opus 4.6+, **required** on 4.7+) or legacy `ThinkingConfig{BudgetTokens: N}` (Sonnet/Haiku); `Effort` wins when both are set. Add `Display: llm.DisplaySummarized` to the adaptive shape to stream summarized thinking **text** — on Opus 4.7+ the default is signature-only blocks with no text. OpenAI Responses exposes reasoning via its own `Options.ReasoningEffort` — note that its `ThinkingBlock`s are *not* replayed on subsequent requests, so reasoning continuity across a tool loop is lost there (tool calls themselves replay fine); Gemini thinks natively.
+- **Extended thinking.** Set `Request.Thinking` and read `ThinkingBlock` content back. Two shapes on Anthropic: adaptive `ThinkingConfig{Effort: llm.EffortMedium}` (Opus 4.6+, **required** on 4.7+) or legacy `ThinkingConfig{BudgetTokens: N}` (Sonnet/Haiku); `Effort` wins when both are set. Add `Display: llm.DisplaySummarized` to the adaptive shape to stream summarized thinking **text** — on Opus 4.7+ the default is signature-only blocks with no text. OpenAI Responses exposes reasoning via its own `Options.ReasoningEffort` — note that its `ThinkingBlock`s are *not* replayed on subsequent requests, so reasoning continuity across a tool loop is lost there (tool calls themselves replay fine). Gemini `thoughtSignature` metadata is retained on the exact text, thinking, or tool-call block and replayed with assistant history.
 - **Open-closed providers.** Implement `LLM.Stream` to add custom providers; no plugin registry needed.
 - **Errors that branch cleanly.** `errors.Is(err, llm.ErrRateLimit)` works through `*APIError` wraps; `errors.As(err, &apiErr)` gives you status + body.
 - **Cancellation = `context.Context`.** No bespoke abort signal types.
@@ -183,7 +183,15 @@ import "github.com/amit-timalsina/pi-llm-go/providers/gemini"
 p, _ := gemini.New(gemini.Options{APIKey: os.Getenv("GEMINI_API_KEY")})
 ```
 
-Native support for the Gemini 2.5 / 3 / Robotics ER 1.6 families. Same `LLM` interface as the other providers, plus **`llm.VideoBlock` for native video input** (Gemini is the only provider that accepts video natively; Anthropic and OpenAI reject `VideoBlock` at the wire boundary with a clear pointer to the frame-extraction workaround). YouTube URLs work directly:
+Native support for the Gemini 2.5 / 3 / Robotics ER 1.6 families. Same `LLM` interface as the other providers, plus **`llm.VideoBlock` for native video input** (Gemini is the only provider that accepts video natively; Anthropic and OpenAI reject `VideoBlock` at the wire boundary with a clear pointer to the frame-extraction workaround).
+
+Gemini's stateless `generateContent` tool loops preserve returned thought
+signatures automatically when callers append the complete assistant
+`Message` to the next request. Gemini 3 requires function-call signatures;
+Gemini 2.5 does not strictly require its first-part signature, but retaining it
+preserves reasoning continuity.
+
+YouTube URLs work directly:
 
 ```go
 llm.VideoBlock{URI: "https://www.youtube.com/watch?v=..."}

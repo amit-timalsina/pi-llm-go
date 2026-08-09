@@ -39,9 +39,12 @@ type EventTextDelta struct {
 	Delta      string
 }
 
-// EventTextEnd marks the end of the TextBlock at BlockIndex.
+// EventTextEnd marks the end of the TextBlock at BlockIndex. Signature is
+// an optional opaque provider-supplied reasoning token attached to that
+// exact text part.
 type EventTextEnd struct {
 	BlockIndex int
+	Signature  string
 }
 
 // EventThinkingStart marks the beginning of a ThinkingBlock.
@@ -81,10 +84,12 @@ type EventToolCallDelta struct {
 }
 
 // EventToolCallEnd marks the end of a ToolCallBlock and carries the
-// assembled arguments.
+// assembled arguments. Signature is an optional opaque provider-supplied
+// reasoning token attached to that exact tool-call part.
 type EventToolCallEnd struct {
 	BlockIndex int
 	Arguments  json.RawMessage
+	Signature  string
 }
 
 // EventMessageEnd is the terminal event. It carries the normalized stop

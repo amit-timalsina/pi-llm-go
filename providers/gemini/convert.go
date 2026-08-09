@@ -90,18 +90,23 @@ type apiSystem struct {
 // uniform JSON shape (no explicit "type" tag — variant is implied by
 // which field is non-zero).
 type apiPart struct {
-	Text             string            `json:"text,omitempty"`
+	// Text is a pointer so an empty text part carrying only a
+	// thoughtSignature remains distinguishable from a non-text part.
+	// Gemini can emit that shape in the final streaming chunk.
+	Text             *string           `json:"text,omitempty"`
 	InlineData       *apiBlob          `json:"inlineData,omitempty"`
 	FileData         *apiFileData      `json:"fileData,omitempty"`
 	VideoMetadata    *apiVideoMetadata `json:"videoMetadata,omitempty"`
 	FunctionCall     *apiFunctionCall  `json:"functionCall,omitempty"`
 	FunctionResponse *apiFunctionResp  `json:"functionResponse,omitempty"`
-	// Thought marks a thinking-only part on the response side; we never
-	// emit thought parts on outgoing messages (Gemini round-trips
-	// thoughts via server-side state, not by replaying them in
-	// contents).
-	Thought bool `json:"thought,omitempty"`
+	// Thought marks a thinking-summary part. generateContent is stateless,
+	// so signed thought parts are replayed in assistant history exactly as
+	// received rather than relying on provider-side conversation state.
+	Thought          bool   `json:"thought,omitempty"`
+	ThoughtSignature string `json:"thoughtSignature,omitempty"`
 }
+
+func stringPtr(s string) *string { return &s }
 
 type apiBlob struct {
 	MimeType string `json:"mimeType"`
@@ -183,7 +188,7 @@ func buildRequestBody(req llm.Request) (io.Reader, error) {
 
 	if req.System != "" {
 		body.SystemInstruction = &apiSystem{
-			Parts: []apiPart{{Text: req.System}},
+			Parts: []apiPart{{Text: stringPtr(req.System)}},
 		}
 	}
 
@@ -306,9 +311,9 @@ func convertOutgoingMessage(m llm.Message, toolNameByID map[string]string) (apiC
 			return apiContent{}, err
 		}
 		if drop {
-			// e.g. ThinkingBlock on an outgoing message — Gemini doesn't
-			// accept thought parts as input; emitting an empty apiPart
-			// would put "{}" on the wire and the server would reject.
+			// e.g. an unsigned ThinkingBlock from provider-neutral history.
+			// Emitting an empty apiPart would put "{}" on the wire and the
+			// server would reject.
 			continue
 		}
 		out.Parts = append(out.Parts, part)
@@ -330,20 +335,31 @@ func geminiRole(r llm.Role) string {
 }
 
 // convertOutgoingBlock translates one llm.Block into a Gemini apiPart.
-// Returns (part, drop, err). drop=true means the block has no wire
-// representation (e.g. ThinkingBlock is never replayed outbound) and
-// the caller should skip the empty result instead of appending it.
+// Returns (part, drop, err). drop=true means the block has no safe wire
+// representation and the caller should skip the empty result instead of
+// appending it.
 func convertOutgoingBlock(b llm.Block, toolNameByID map[string]string) (apiPart, bool, error) {
 	switch v := b.(type) {
 	case llm.TextBlock:
-		return apiPart{Text: v.Text}, false, nil
+		return apiPart{
+			Text:             stringPtr(v.Text),
+			ThoughtSignature: v.Signature,
+		}, false, nil
 
 	case llm.ThinkingBlock:
-		// Don't replay thinking on outgoing messages — Gemini doesn't
-		// accept thought parts as input, and round-tripping them via
-		// server-side state would require us to track a session id we
-		// don't expose at v0.4.0. Drop on send; the caller filters.
-		return apiPart{}, true, nil
+		// A signed ThinkingBlock came from a Gemini thought part. Replay the
+		// complete part because generateContent requests are stateless and
+		// the signature is only meaningful at its original part position.
+		// Keep dropping unsigned thinking to preserve the prior behavior for
+		// provider-neutral histories that may have originated elsewhere.
+		if v.Signature == "" {
+			return apiPart{}, true, nil
+		}
+		return apiPart{
+			Text:             stringPtr(v.Thinking),
+			Thought:          true,
+			ThoughtSignature: v.Signature,
+		}, false, nil
 
 	case llm.ToolCallBlock:
 		args := v.Arguments
@@ -355,6 +371,7 @@ func convertOutgoingBlock(b llm.Block, toolNameByID map[string]string) (apiPart,
 		// pi-llm-go's synthesized fallback (the function name) which
 		// the server tolerates.
 		return apiPart{
+			ThoughtSignature: v.Signature,
 			FunctionCall: &apiFunctionCall{
 				Id:   v.ID,
 				Name: v.Name,

@@ -15,7 +15,9 @@ go get github.com/amit-timalsina/pi-llm-go
 - `llm.Tool` — `Name`, `Description`, `InputSchema`, `Strict` (grammar-constrained argument sampling; wired across all four providers).
 - `llm.ToolChoice` — `{Type, Name}`; `Type` is `ToolChoiceAuto` | `ToolChoiceAny` | `ToolChoiceTool` | `ToolChoiceNone`.
 - `llm.ThinkingConfig` — `Effort` (`EffortLow`/`Medium`/`High`, adaptive; Opus 4.6+, required on 4.7+) or `BudgetTokens` (legacy); `Effort` wins when both set.
-- `llm.Message` — `Role` (User/Assistant/Tool) + `Content []Block`.
+- `llm.Message` — `Role` (User/Assistant/Tool) + `Content []Block`; opaque
+  provider reasoning signatures stay attached to their exact
+  `TextBlock`/`ThinkingBlock`/`ToolCallBlock` through `Signature`.
 - `llm.Block` — sealed sum: `TextBlock`, `ToolCallBlock`, `ToolResultBlock`, `ThinkingBlock`, `ImageBlock`, `VideoBlock`.
 - `llm.StreamEvent` — sealed sum: `EventMessageStart`, `EventTextStart`, `EventTextDelta`, `EventTextEnd`, `EventThinkingStart`, `EventThinkingDelta`, `EventThinkingEnd`, `EventToolCallStart`, `EventToolCallDelta`, `EventToolCallEnd`, `EventMessageEnd`.
 - `llm.Usage` — token accounting incl. per-TTL cache breakdown (Anthropic).
@@ -35,7 +37,7 @@ go get github.com/amit-timalsina/pi-llm-go
 - `providers/anthropic` — Anthropic Messages API. Constants: `ClaudeOpus4_7`, `ClaudeOpus4_6`, `ClaudeSonnet4_6`, `ClaudeHaiku4_5`. Implements `llm.TokenCounter`. Supports prompt caching (5m + 1h tiers via `CacheRetention=Short|Long`).
 - `providers/openai` — OpenAI-compatible Chat Completions. Constants: `GPT5_5`, `GPT5_4`, `GPT5_4Mini`, `GPT5_4Nano`. Works with Azure OpenAI, Groq, Together, vLLM, OpenRouter, Ollama via `Options.BaseURL` / `Options.URL` / `Options.Headers`.
 - `providers/openai_responses` — OpenAI Responses API (`/v1/responses`). GPT-5 server-side state, reasoning summaries (mapped to `ThinkingBlock`), built-in tool primitives.
-- `providers/gemini` — Google Gemini (Generative Language API). Constants: `Gemini3_1Pro`, `Gemini2_5Pro`, `Gemini2_5Flash`, `Gemini2_5FlashLite`. Implements `llm.TokenCounter`. Native `VideoBlock` input.
+- `providers/gemini` — Google Gemini (Generative Language API). Constants: `Gemini3_1ProPreview`, `Gemini2_5Pro`, `Gemini2_5Flash`, `Gemini2_5FlashLite`. Implements `llm.TokenCounter`. Native `VideoBlock` input. Captures and exactly replays stateless `thoughtSignature` metadata for text, thinking, and tool-call parts.
 - `providers/gemini/files` — Files API helper for >20 MB inputs (Upload / Wait / Get / Delete).
 
 ## Companion library

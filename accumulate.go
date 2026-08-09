@@ -49,7 +49,7 @@ func Accumulate(events iter.Seq2[StreamEvent, error]) iter.Seq2[*Message, error]
 				}
 			case EventTextEnd:
 				if b, ok := textBuilders[e.BlockIndex]; ok {
-					msg.Content[e.BlockIndex] = TextBlock{Text: b.String()}
+					msg.Content[e.BlockIndex] = TextBlock{Text: b.String(), Signature: e.Signature}
 				}
 			case EventThinkingStart:
 				msg.Content = appendBlockAt(msg.Content, e.BlockIndex, ThinkingBlock{})
@@ -80,6 +80,7 @@ func Accumulate(events iter.Seq2[StreamEvent, error]) iter.Seq2[*Message, error]
 				}
 				existing, _ := msg.Content[e.BlockIndex].(ToolCallBlock)
 				existing.Arguments = e.Arguments
+				existing.Signature = e.Signature
 				msg.Content[e.BlockIndex] = existing
 			case EventMessageEnd:
 				msg.StopReason = e.StopReason
@@ -123,8 +124,9 @@ func snapshot(
 		if idx >= len(out.Content) {
 			continue
 		}
-		if _, ok := out.Content[idx].(TextBlock); ok {
-			out.Content[idx] = TextBlock{Text: b.String()}
+		if existing, ok := out.Content[idx].(TextBlock); ok {
+			existing.Text = b.String()
+			out.Content[idx] = existing
 		}
 	}
 	for idx, b := range thinkBuilders {
