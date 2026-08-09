@@ -141,9 +141,9 @@ func buildCountInnerBody(req llm.Request) (*generateContentForCount, error) {
 		decls := make([]apiFunctionDecl, 0, len(req.Tools))
 		for _, t := range req.Tools {
 			decls = append(decls, apiFunctionDecl{
-				Name:        t.Name,
-				Description: t.Description,
-				Parameters:  t.InputSchema,
+				Name:           t.Name,
+				Description:    t.Description,
+				ParametersJSON: t.InputSchema,
 			})
 		}
 		out.Tools = []apiTool{{FunctionDeclarations: decls}}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -577,6 +578,59 @@ func TestRequest_Tools(t *testing.T) {
 	if first["description"] != "echoes back" {
 		t.Errorf("functionDeclaration description=%v, want echoes back", first["description"])
 	}
+	if _, legacy := first["parameters"]; legacy {
+		t.Errorf("schema went to the OpenAPI-subset field: %#v", first)
+	}
+	got, err := json.Marshal(first["parametersJsonSchema"])
+	if err != nil {
+		t.Fatalf("marshal parametersJsonSchema: %v", err)
+	}
+	if !jsonEqual(t, got, schema) {
+		t.Errorf("parametersJsonSchema=%s, want %s", got, schema)
+	}
+}
+
+// A schema derived from a Go struct carries $schema, additionalProperties and
+// $defs. Gemini's OpenAPI-subset `parameters` field rejects all three, so the
+// declaration must go out as standard JSON Schema, byte-for-byte.
+func TestRequest_ToolsDerivedSchemaSurvivesIntact(t *testing.T) {
+	fs := &fakeServer{payload: toolCallPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	schema := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","$defs":{"Unit":{"type":"string","enum":["c","f"]}},"type":"object","properties":{"city":{"type":"string"},"unit":{"$ref":"#/$defs/Unit"}},"required":["city"],"additionalProperties":false}`)
+	if _, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    gemini.Gemini2_5Flash,
+		Tools:    []llm.Tool{{Name: "weather", InputSchema: schema}},
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "weather?"}}}},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	decls := body["tools"].([]any)[0].(map[string]any)["functionDeclarations"].([]any)
+	first := decls[0].(map[string]any)
+	got, err := json.Marshal(first["parametersJsonSchema"])
+	if err != nil {
+		t.Fatalf("marshal parametersJsonSchema: %v", err)
+	}
+	if !jsonEqual(t, got, schema) {
+		t.Errorf("schema was altered on the wire:\n got %s\nwant %s", got, schema)
+	}
+}
+
+func jsonEqual(t *testing.T, a, b json.RawMessage) bool {
+	t.Helper()
+	var x, y any
+	if err := json.Unmarshal(a, &x); err != nil {
+		t.Fatalf("unmarshal %s: %v", a, err)
+	}
+	if err := json.Unmarshal(b, &y); err != nil {
+		t.Fatalf("unmarshal %s: %v", b, err)
+	}
+	return reflect.DeepEqual(x, y)
 }
 
 // TestRequest_SystemPrompt verifies a non-empty System gets emitted

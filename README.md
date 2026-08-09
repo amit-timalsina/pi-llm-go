@@ -185,6 +185,8 @@ p, _ := gemini.New(gemini.Options{APIKey: os.Getenv("GEMINI_API_KEY")})
 
 Native support for the Gemini 2.5 / 3 / Robotics ER 1.6 families. Same `LLM` interface as the other providers, plus **`llm.VideoBlock` for native video input** (Gemini is the only provider that accepts video natively; Anthropic and OpenAI reject `VideoBlock` at the wire boundary with a clear pointer to the frame-extraction workaround).
 
+`Tool.InputSchema` takes ordinary JSON Schema here, same as the other providers — struct-derived schemas carrying `$schema`, `additionalProperties`, `$defs` and `$ref` go out as-is (pi-llm-go sends `parametersJsonSchema`, not Gemini's narrower OpenAPI-subset `parameters` field).
+
 Gemini's stateless `generateContent` tool loops preserve returned thought
 signatures automatically when callers append the complete assistant
 `Message` to the next request. Gemini 3 requires function-call signatures;

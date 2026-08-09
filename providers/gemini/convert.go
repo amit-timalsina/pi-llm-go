@@ -153,10 +153,16 @@ type apiTool struct {
 	FunctionDeclarations []apiFunctionDecl `json:"functionDeclarations"`
 }
 
+// apiFunctionDecl declares one callable tool. Parameters go in
+// parametersJsonSchema, NOT the older parameters field: the latter takes
+// Gemini's OpenAPI-3.0 subset, which rejects ordinary JSON Schema keys like
+// $schema, additionalProperties and $defs — everything a Go struct-to-schema
+// generator emits. parametersJsonSchema takes standard JSON Schema, so the
+// caller's schema goes out untouched. The two are mutually exclusive.
 type apiFunctionDecl struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description,omitempty"`
+	ParametersJSON json.RawMessage `json:"parametersJsonSchema,omitempty"`
 }
 
 // generationConfig collects all "tunables" Gemini groups together —
@@ -213,9 +219,9 @@ func buildRequestBody(req llm.Request) (io.Reader, error) {
 		decls := make([]apiFunctionDecl, 0, len(req.Tools))
 		for _, t := range req.Tools {
 			decls = append(decls, apiFunctionDecl{
-				Name:        t.Name,
-				Description: t.Description,
-				Parameters:  t.InputSchema,
+				Name:           t.Name,
+				Description:    t.Description,
+				ParametersJSON: t.InputSchema,
 			})
 		}
 		body.Tools = []apiTool{{FunctionDeclarations: decls}}
