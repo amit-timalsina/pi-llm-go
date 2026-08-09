@@ -6,6 +6,35 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-08-09
+
+### Fixed
+
+- **Gemini accepts ordinary JSON Schema tool definitions again.** Tool
+  schemas went out in `functionDeclarations[].parameters`, which takes
+  Gemini's OpenAPI-3.0 *subset* and rejects the request outright on any key
+  outside it — including `$schema`, `additionalProperties`, `$defs` and
+  `$ref`, i.e. everything a Go struct-to-schema generator emits. Every
+  `pi-agent-go` `Typed[I, O]` tool was therefore unusable against Gemini:
+
+  ```
+  400 Invalid JSON payload received. Unknown name "$schema" at
+  'tools[0].function_declarations[0].parameters': Cannot find field.
+  ```
+
+  Schemas now go out in `parametersJsonSchema`, the sibling field that takes
+  standard JSON Schema, so the caller's schema reaches the wire untouched —
+  no sanitising, no key allowlist to maintain, and nested `$defs`/`$ref`
+  resolve server-side rather than needing client-side inlining. Verified
+  live across `gemini-2.5-flash`, `gemini-2.5-pro` and
+  `gemini-3.1-pro-preview`; a hand-written Gemini-dialect schema (`nullable`,
+  `propertyOrdering`) is still accepted, so this is strictly more permissive
+  than before. Fixes [#50].
+
+  Both the streaming path and `CountTokens` were affected; both are fixed.
+
+[#50]: https://github.com/amit-timalsina/pi-llm-go/issues/50
+
 ## [1.4.0] - 2026-08-09
 
 ### Added
@@ -836,7 +865,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.1.1...v1.2.0

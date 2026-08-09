@@ -7,6 +7,13 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v1.4.1** shipped 2026-08-09 — Gemini tool schemas go out in
+  `parametersJsonSchema` instead of the OpenAPI-subset `parameters` field.
+  Closes #50 — the subset rejects `$schema` / `additionalProperties` /
+  `$defs` / `$ref`, so every pi-agent-go `Typed[I, O]` tool 400'd against
+  Gemini. Sending real JSON Schema beats sanitising: no key allowlist to
+  chase as the dialect drifts, and `$ref` resolves server-side. Affected
+  both streaming and `CountTokens`.
 - **v1.4.0** shipped 2026-08-09 — Opaque part signatures on `TextBlock` /
   `ToolCallBlock` (+ matching `EventTextEnd` / `EventToolCallEnd` fields),
   and Gemini capture + stateless replay of `thoughtSignature`. Gemini 3
