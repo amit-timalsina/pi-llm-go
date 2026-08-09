@@ -30,7 +30,7 @@ func TestAccumulateBuildsFinalMessage(t *testing.T) {
 		llm.EventTextStart{BlockIndex: 0},
 		llm.EventTextDelta{BlockIndex: 0, Delta: "Hello "},
 		llm.EventTextDelta{BlockIndex: 0, Delta: "world."},
-		llm.EventTextEnd{BlockIndex: 0},
+		llm.EventTextEnd{BlockIndex: 0, Signature: "text-signature"},
 		llm.EventMessageEnd{
 			StopReason: llm.StopReasonEnd,
 			Usage:      llm.Usage{InputTokens: 10, OutputTokens: 3, TotalTokens: 13},
@@ -60,6 +60,9 @@ func TestAccumulateBuildsFinalMessage(t *testing.T) {
 	if tb.Text != "Hello world." {
 		t.Errorf("Text=%q", tb.Text)
 	}
+	if tb.Signature != "text-signature" {
+		t.Errorf("Signature=%q", tb.Signature)
+	}
 	if final.StopReason != llm.StopReasonEnd {
 		t.Errorf("StopReason=%v", final.StopReason)
 	}
@@ -77,7 +80,7 @@ func TestAccumulateMultipleBlocks(t *testing.T) {
 		llm.EventToolCallStart{BlockIndex: 1, ID: "tu_1", Name: "search"},
 		llm.EventToolCallDelta{BlockIndex: 1, Delta: `{"q":`},
 		llm.EventToolCallDelta{BlockIndex: 1, Delta: `"go iterators"}`},
-		llm.EventToolCallEnd{BlockIndex: 1, Arguments: json.RawMessage(`{"q":"go iterators"}`)},
+		llm.EventToolCallEnd{BlockIndex: 1, Arguments: json.RawMessage(`{"q":"go iterators"}`), Signature: "tool-signature"},
 		llm.EventMessageEnd{StopReason: llm.StopReasonToolUse, Usage: llm.Usage{}},
 	}
 	var final *llm.Message
@@ -99,6 +102,9 @@ func TestAccumulateMultipleBlocks(t *testing.T) {
 	}
 	if tc.ID != "tu_1" || tc.Name != "search" {
 		t.Errorf("ToolCallBlock fields: %+v", tc)
+	}
+	if tc.Signature != "tool-signature" {
+		t.Errorf("ToolCallBlock.Signature=%q", tc.Signature)
 	}
 	var args struct{ Q string }
 	if err := json.Unmarshal(tc.Arguments, &args); err != nil {

@@ -54,10 +54,12 @@ type usageMetadata struct {
 //   - The final frame has finishReason set and (usually) empty parts.
 //   - usageMetadata is CUMULATIVE on every frame; we capture the last
 //     non-zero one and emit at MessageEnd.
-//   - thoughtsTokenCount is the reasoning-token count; we surface as a
-//     ThinkingBlock with no Signature (Gemini doesn't expose a thought
-//     replay token at v0.4.0). The thought text itself only appears
-//     when generationConfig.thinkingConfig.includeThoughts is true.
+//   - thoughtsTokenCount is the reasoning-token count. The thought text
+//     itself only appears when generationConfig.thinkingConfig.includeThoughts
+//     is true.
+//   - thoughtSignature is opaque part metadata. It can accompany text,
+//     thought, or functionCall parts and may arrive on a final empty text
+//     chunk, so capture does not depend on a non-empty text delta.
 func decodeStream(r io.Reader, modelHint string, yield func(llm.StreamEvent, error) bool) {
 	acc := newStreamAccumulator(modelHint)
 
@@ -106,10 +108,12 @@ type streamAccumulator struct {
 	// textBlocks / thinkingBlocks map "currently-open" stream to its
 	// emitted block index. Gemini sometimes interleaves a text chunk
 	// and a thought chunk; we keep them separate.
-	openTextIdx     int
-	openThinkingIdx int
-	textOpen        bool
-	thinkingOpen    bool
+	openTextIdx       int
+	openThinkingIdx   int
+	textOpen          bool
+	thinkingOpen      bool
+	textSignature     string
+	thinkingSignature string
 
 	lastUsage   *usageMetadata
 	stopReason  llm.StopReason
@@ -177,6 +181,7 @@ func (a *streamAccumulator) consumePart(p apiPart) []llm.StreamEvent {
 			llm.EventToolCallEnd{
 				BlockIndex: idx,
 				Arguments:  p.FunctionCall.Args,
+				Signature:  p.ThoughtSignature,
 			},
 		)
 		return events
@@ -184,6 +189,11 @@ func (a *streamAccumulator) consumePart(p apiPart) []llm.StreamEvent {
 	case p.Thought:
 		// Thinking-mode chunk. Open a thinking block on first thought.
 		events := []llm.StreamEvent{}
+		if p.ThoughtSignature != "" && a.thinkingOpen {
+			// A signature belongs to this exact Part. Never merge the signed
+			// chunk into an already-open unsigned thought block.
+			events = append(events, a.closeThinking()...)
+		}
 		if !a.thinkingOpen {
 			// If a text block is open it stays open; thoughts and text
 			// can interleave on the wire — though Gemini typically
@@ -191,36 +201,77 @@ func (a *streamAccumulator) consumePart(p apiPart) []llm.StreamEvent {
 			a.openThinkingIdx = a.nextBlockIndex
 			a.nextBlockIndex++
 			a.thinkingOpen = true
+			a.thinkingSignature = ""
 			events = append(events, llm.EventThinkingStart{BlockIndex: a.openThinkingIdx})
 		}
-		if p.Text != "" {
+		if p.ThoughtSignature != "" {
+			a.thinkingSignature = p.ThoughtSignature
+		}
+		if p.Text != nil && *p.Text != "" {
 			events = append(events, llm.EventThinkingDelta{
 				BlockIndex: a.openThinkingIdx,
-				Delta:      p.Text,
+				Delta:      *p.Text,
 			})
+		}
+		if p.ThoughtSignature != "" {
+			// Close signed parts immediately so a later unsigned stream chunk
+			// cannot be merged into the signature's positional context.
+			events = append(events, a.closeThinking()...)
 		}
 		return events
 
-	case p.Text != "":
+	case p.Text != nil:
+		if *p.Text == "" && p.ThoughtSignature == "" {
+			// Nothing to record. Opening a block would leave an empty
+			// TextBlock, which other providers reject when the message is
+			// replayed (Anthropic 400s on a content-less text block).
+			return nil
+		}
 		events := []llm.StreamEvent{}
 		// Close thinking if it was open and we're now in text territory.
 		if a.thinkingOpen {
-			events = append(events, llm.EventThinkingEnd{
-				BlockIndex: a.openThinkingIdx,
-				Signature:  "", // Gemini doesn't expose a thinking signature
-			})
-			a.thinkingOpen = false
+			events = append(events, a.closeThinking()...)
 		}
+		if p.ThoughtSignature != "" && a.textOpen {
+			// The API forbids merging a signed Part with an unsigned Part.
+			// A final empty-text signature chunk therefore becomes its own
+			// TextBlock instead of metadata on the preceding prose block.
+			events = append(events, a.closeText()...)
+		}
+		if !a.textOpen {
+			a.openTextIdx = a.nextBlockIndex
+			a.nextBlockIndex++
+			a.textOpen = true
+			a.textSignature = ""
+			events = append(events, llm.EventTextStart{BlockIndex: a.openTextIdx})
+		}
+		if p.ThoughtSignature != "" {
+			a.textSignature = p.ThoughtSignature
+		}
+		if *p.Text != "" {
+			events = append(events, llm.EventTextDelta{
+				BlockIndex: a.openTextIdx,
+				Delta:      *p.Text,
+			})
+		}
+		if p.ThoughtSignature != "" {
+			events = append(events, a.closeText()...)
+		}
+		return events
+
+	case p.ThoughtSignature != "":
+		// Be liberal with a metadata-only part even though Gemini normally
+		// serializes the empty text field explicitly. Preserve the signature
+		// as an empty TextBlock rather than silently discarding it.
+		events := a.closeOpen()
 		if !a.textOpen {
 			a.openTextIdx = a.nextBlockIndex
 			a.nextBlockIndex++
 			a.textOpen = true
 			events = append(events, llm.EventTextStart{BlockIndex: a.openTextIdx})
 		}
-		events = append(events, llm.EventTextDelta{
-			BlockIndex: a.openTextIdx,
-			Delta:      p.Text,
-		})
+		a.textSignature = p.ThoughtSignature
+		events = append(events, a.closeText()...)
 		return events
 	}
 	return nil
@@ -228,18 +279,35 @@ func (a *streamAccumulator) consumePart(p apiPart) []llm.StreamEvent {
 
 func (a *streamAccumulator) closeOpen() []llm.StreamEvent {
 	var events []llm.StreamEvent
-	if a.thinkingOpen {
-		events = append(events, llm.EventThinkingEnd{
-			BlockIndex: a.openThinkingIdx,
-			Signature:  "",
-		})
-		a.thinkingOpen = false
-	}
-	if a.textOpen {
-		events = append(events, llm.EventTextEnd{BlockIndex: a.openTextIdx})
-		a.textOpen = false
-	}
+	events = append(events, a.closeThinking()...)
+	events = append(events, a.closeText()...)
 	return events
+}
+
+func (a *streamAccumulator) closeThinking() []llm.StreamEvent {
+	if !a.thinkingOpen {
+		return nil
+	}
+	event := llm.EventThinkingEnd{
+		BlockIndex: a.openThinkingIdx,
+		Signature:  a.thinkingSignature,
+	}
+	a.thinkingOpen = false
+	a.thinkingSignature = ""
+	return []llm.StreamEvent{event}
+}
+
+func (a *streamAccumulator) closeText() []llm.StreamEvent {
+	if !a.textOpen {
+		return nil
+	}
+	event := llm.EventTextEnd{
+		BlockIndex: a.openTextIdx,
+		Signature:  a.textSignature,
+	}
+	a.textOpen = false
+	a.textSignature = ""
+	return []llm.StreamEvent{event}
 }
 
 func (a *streamAccumulator) finalize() []llm.StreamEvent {

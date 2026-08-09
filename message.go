@@ -55,14 +55,18 @@ type Block interface {
 	isBlock()
 }
 
-// TextBlock holds plain text content.
+// TextBlock holds plain text content. Signature is an opaque
+// provider-supplied reasoning token attached to this exact content part;
+// callers should preserve it when replaying assistant history to the same
+// provider. Most providers leave Signature empty.
 type TextBlock struct {
-	Text string
+	Text      string
+	Signature string
 }
 
 // ThinkingBlock holds an extended-thinking segment emitted by reasoning
 // models. Signature is an opaque provider-supplied token that must be
-// preserved and replayed for multi-turn thinking continuity (Anthropic).
+// preserved and replayed for multi-turn thinking continuity.
 type ThinkingBlock struct {
 	Thinking  string
 	Signature string
@@ -70,11 +74,15 @@ type ThinkingBlock struct {
 
 // ToolCallBlock represents a tool invocation requested by the model.
 // Arguments is the raw JSON object the model emitted, matching the tool's
-// declared InputSchema. The agent layer validates and dispatches.
+// declared InputSchema. Signature is an opaque provider-supplied reasoning
+// token attached to this exact tool-call part; callers should preserve it
+// when replaying assistant history to the same provider. The agent layer
+// validates and dispatches.
 type ToolCallBlock struct {
 	ID        string
 	Name      string
 	Arguments json.RawMessage
+	Signature string
 }
 
 // ToolResultBlock carries the result of a tool invocation back to the model.

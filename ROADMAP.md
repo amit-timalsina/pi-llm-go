@@ -7,6 +7,14 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v1.4.0** shipped 2026-08-09 — Opaque part signatures on `TextBlock` /
+  `ToolCallBlock` (+ matching `EventTextEnd` / `EventToolCallEnd` fields),
+  and Gemini capture + stateless replay of `thoughtSignature`. Gemini 3
+  strictly validates current-turn function-call signatures, so a tool loop
+  without replay 4xxs. Live-verified on `gemini-3.1-pro-preview`: turn 1
+  captured a real signature, turn 2's signed history was accepted. Review
+  also caught an unsigned-empty-text part becoming an empty `TextBlock`
+  that Anthropic then rejects on replay; that part is now skipped.
 - **v1.3.0** shipped 2026-08-04 — `ErrMalformedStream` + guard against an
   unmatched `EventToolCallEnd` in `Accumulate`. Surfaced by
   pi-agent-go#40, which reported the agent-level panic; the same hole sat

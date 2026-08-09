@@ -118,7 +118,7 @@ func buildCountInnerBody(req llm.Request) (*generateContentForCount, error) {
 
 	if req.System != "" {
 		out.SystemInstruction = &apiSystem{
-			Parts: []apiPart{{Text: req.System}},
+			Parts: []apiPart{{Text: stringPtr(req.System)}},
 		}
 	}
 
