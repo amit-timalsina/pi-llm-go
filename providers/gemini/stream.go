@@ -221,6 +221,12 @@ func (a *streamAccumulator) consumePart(p apiPart) []llm.StreamEvent {
 		return events
 
 	case p.Text != nil:
+		if *p.Text == "" && p.ThoughtSignature == "" {
+			// Nothing to record. Opening a block would leave an empty
+			// TextBlock, which other providers reject when the message is
+			// replayed (Anthropic 400s on a content-less text block).
+			return nil
+		}
 		events := []llm.StreamEvent{}
 		// Close thinking if it was open and we're now in text territory.
 		if a.thinkingOpen {

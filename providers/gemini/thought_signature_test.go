@@ -253,3 +253,29 @@ func capturedParts(t *testing.T, body json.RawMessage, contentIndex int) []map[s
 	}
 	return decoded.Contents[contentIndex].Parts
 }
+
+// An unsigned empty text part carries no content and no signature. Opening a
+// block for it would leave an empty TextBlock in the message, which other
+// providers reject when that history is replayed (Anthropic 400s).
+func TestThoughtSignature_UnsignedEmptyTextPartYieldsNoBlock(t *testing.T) {
+	const payload = `data: {"candidates":[{"content":{"parts":[{"text":""}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":0,"totalTokenCount":5}}
+
+data: {"candidates":[{"content":{"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":0,"totalTokenCount":5}}
+
+`
+	fs := &fakeServer{payload: payload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	msg, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    gemini.Gemini2_5Flash,
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if len(msg.Content) != 0 {
+		t.Fatalf("want no blocks, got %#v", msg.Content)
+	}
+}
