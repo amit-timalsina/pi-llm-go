@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-09
+
 ### Added
 
 - **Opaque part signatures on `TextBlock` and `ToolCallBlock`.** The new
@@ -24,6 +26,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   but replay still preserves reasoning continuity. Streaming also retains a
   signature delivered in the final empty-text part without merging that
   signed part into adjacent unsigned prose.
+
+- **Gemini no longer emits a block for an unsigned empty text part.** An
+  isolated `{"text": ""}` frame produced `TextBlock{Text: "", Signature: ""}`,
+  and such a block is not inert: replaying that message to Anthropic fails
+  with `400 messages.N.content.0.text.text: Field required`. An unsigned
+  empty part carries neither content nor a signature, so it is skipped.
+  Signed empty parts still get their own block — that is the case the
+  signature work exists to support.
 
 ## [1.3.0] - 2026-08-04
 
@@ -826,7 +836,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.1.0...v1.1.1
