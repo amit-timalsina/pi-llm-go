@@ -7,6 +7,11 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v1.7.0** shipped 2026-08-17 — provider-qualified model ids
+  (`all.OpenModel` / `all.ParseModel`). Closes #58 — provider and model were
+  two config values that had to agree, and deriving one from a name prefix
+  misroutes on Azure, on gateways, and on the next naming change. Syntax, not
+  the catalog declined in v1.6.0: no upkeep, no silent substitution.
 - **v1.6.0** shipped 2026-08-17 — `providers/all`: build any provider from a
   config string. Closes #55 — provider choice was unsupported, so consumers
   duplicated a switch that encoded library-internal facts. A leaf package,

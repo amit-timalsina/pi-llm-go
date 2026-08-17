@@ -138,6 +138,15 @@ p, err := all.Open(all.Spec{
 })
 ```
 
+**Better still, let the model id carry its provider**, so routing is one config value that cannot self-contradict:
+
+```go
+p, model, err := all.OpenModel("openai_responses:gpt-5.6-sol", all.Spec{APIKey: key})
+msg, err := llm.Complete(ctx, p, llm.Request{Model: model, ...})
+```
+
+`all.ParseModel` does the split alone, for validating config at startup without constructing anything. The split is on the first colon, so a model id containing colons survives (`openai:ft:gpt-4o-mini:acme::abc123`). A bare id returns `all.ErrUnqualifiedModel` rather than being guessed at — guessing from a name prefix misroutes silently, because Azure serves `gpt-4o` at its own endpoint and a gateway serves `anthropic/claude-*` over an OpenAI-shaped API. Azure falls out as `openai_responses:gpt-4o` with `URL` and `Headers` in the `Spec`.
+
 `all.Names()` gives the valid names for config validation, and an unknown name returns `all.ErrUnknownProvider` listing them. A `Spec` field the chosen provider can't honour (`Headers` on Anthropic, say) returns `all.ErrUnsupportedOption` rather than being quietly dropped.
 
 Reasoning effort and summaries are deliberately *not* in `Spec` — they ride on `Request.Thinking` per call, so a provider opened this way can still vary effort request by request.
