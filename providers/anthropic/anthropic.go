@@ -46,7 +46,7 @@ const (
 
 // Options configures a Provider at construction time.
 type Options struct {
-	APIKey     string       // required; falls back to ANTHROPIC_API_KEY in os.Getenv
+	APIKey     string       // required; New errors when empty (no env fallback)
 	BaseURL    string       // default "https://api.anthropic.com"
 	Version    string       // default "2023-06-01"
 	HTTPClient *http.Client // default http.DefaultClient

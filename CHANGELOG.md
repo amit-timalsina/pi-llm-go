@@ -6,6 +6,48 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-08-17
+
+### Added
+
+- **`providers/all` — construct any built-in provider from its name.** Picking
+  a provider from config was unsupported, so every consumer wrote the same
+  four-arm switch and had to know library-internal facts to get it right.
+
+  ```go
+  p, err := all.Open(all.Spec{Provider: all.Name(cfg.Provider), APIKey: key, Retry: &retry})
+  ```
+
+  `all.Names()` returns the valid names for config validation; an unknown
+  name returns `all.ErrUnknownProvider` **listing them**, so a typo is
+  self-correcting. A `Spec` field the chosen provider cannot honour —
+  `Headers` or `URL` against Anthropic or Gemini — returns
+  `all.ErrUnsupportedOption` instead of being silently dropped, matching the
+  rule the request path follows for `Thinking`.
+
+  It is a leaf package rather than `llm.Open` because provider packages
+  import the root, so the root cannot import them back without a cycle.
+  Importing it links all four providers into the binary; code that needs one
+  provider should keep calling that provider's `New`.
+
+  Reasoning effort and summaries are deliberately absent from `Spec`: since
+  v1.5.0 both ride on `Request.Thinking` per call, so a provider opened this
+  way still varies effort request by request. Closes [#55].
+
+  Upstream `pi-ai` answers the same need with a `Models` registry plus a
+  generated per-model catalog powering `clampThinkingLevel`. The registry
+  shape is adopted here; the catalog is not — clamping silently downgrades a
+  requested effort, which is the behaviour [#54] was filed against, and a
+  generated catalog is the model registry this port has always declined.
+
+### Fixed
+
+- `anthropic.Options.APIKey` documented a fallback to `ANTHROPIC_API_KEY`
+  that does not exist — `New` errors on an empty key, and this package reads
+  no environment variables.
+
+[#55]: https://github.com/amit-timalsina/pi-llm-go/issues/55
+
 ## [1.5.0] - 2026-08-09
 
 ### Fixed
@@ -914,7 +956,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.3.0...v1.4.0

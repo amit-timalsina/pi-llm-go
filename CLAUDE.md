@@ -42,8 +42,9 @@ Sibling repo: [`pi-agent-go`](https://github.com/amit-timalsina/pi-agent-go) —
 3. Wire-level converter for `Request` → provider payload, `Message` round-trip.
 4. SSE decoder mapping provider events → `llm.StreamEvent`.
 5. Tests against `httptest.NewServer` covering: text streaming, tool-call streaming, request-body shape, HTTP error wrapping. No live API in CI.
-6. Update `examples/streaming/main.go` if the new provider needs a flag.
-7. `CHANGELOG.md` entry under `[Unreleased]` → `Added`.
+6. Register it in `providers/all` (name constant, `Open` case, `Names()`), or config-driven consumers silently can't reach it. `TestNamesMatchOpen` catches a half-registration.
+7. Update `examples/streaming/main.go` if the new provider needs a flag.
+8. `CHANGELOG.md` entry under `[Unreleased]` → `Added`.
 
 ## Releases
 

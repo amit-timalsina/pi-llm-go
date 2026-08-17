@@ -124,6 +124,26 @@ Tools: []llm.Tool{{Name: "set_valve", InputSchema: schema, Strict: true}}
 
 See `examples/strict_tool_use` for the end-to-end pattern.
 
+## Choosing a provider from config
+
+When the provider is a config value rather than a compile-time choice, `providers/all` builds any of the four from its name, so the switch lives here instead of in every consumer:
+
+```go
+import "github.com/amit-timalsina/pi-llm-go/providers/all"
+
+p, err := all.Open(all.Spec{
+    Provider: all.Name(cfg.Provider),   // "anthropic" | "openai" | "openai_responses" | "gemini"
+    APIKey:   cfg.APIKey,
+    Retry:    &llm.RetryPolicy{MaxAttempts: 4},
+})
+```
+
+`all.Names()` gives the valid names for config validation, and an unknown name returns `all.ErrUnknownProvider` listing them. A `Spec` field the chosen provider can't honour (`Headers` on Anthropic, say) returns `all.ErrUnsupportedOption` rather than being quietly dropped.
+
+Reasoning effort and summaries are deliberately *not* in `Spec` — they ride on `Request.Thinking` per call, so a provider opened this way can still vary effort request by request.
+
+Importing `providers/all` links all four providers into your binary. Code that needs exactly one should keep calling that provider's `New` directly; this package is a leaf and nothing else depends on it.
+
 ## When to pick `pi-llm-go`
 
 | You want | Pick |
