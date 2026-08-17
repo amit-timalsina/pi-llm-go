@@ -14,8 +14,12 @@
 //	    BaseURL: "https://api.groq.com/openai/v1",
 //	})
 //
-// The provider does NOT honor llm.Request.Thinking at v1 — reasoning-effort
-// dialects vary too much across compatible providers to map portably.
+// llm.Request.Thinking.Effort is forwarded as reasoning_effort, and only
+// when set: non-reasoning models reject the field, and this package has no
+// model registry to decide on the caller's behalf. BudgetTokens and
+// DisplaySummarized have no counterpart here and return
+// llm.ErrUnsupportedThinking. OpenAI-compatible hosts vary in whether they
+// accept reasoning_effort at all; the host's own error is the authority.
 package openai
 
 import (

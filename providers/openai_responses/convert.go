@@ -106,6 +106,35 @@ type apiTool struct {
 	Strict bool `json:"strict,omitempty"`
 }
 
+// resolveReasoning settles the per-request Request.Thinking against the
+// per-provider Options defaults. The request wins where it speaks; the
+// Options fill the silence, so a provider built with a house effort keeps
+// working and a caller that varies effort per call is finally heard.
+//
+// BudgetTokens has no counterpart here — the Responses API sizes reasoning
+// by effort, not by a token budget — so it is rejected rather than dropped.
+func resolveReasoning(cfg *llm.ThinkingConfig, optEffort ReasoningEffort, optSummary bool) (ReasoningEffort, bool, error) {
+	effort, summary := optEffort, optSummary
+	if cfg == nil {
+		return effort, summary, nil
+	}
+	if cfg.Effort == "" && cfg.BudgetTokens > 0 {
+		return "", false, fmt.Errorf(
+			"%w: openai_responses sizes reasoning by effort, not tokens; set ThinkingConfig.Effort instead of BudgetTokens",
+			llm.ErrUnsupportedThinking)
+	}
+	if cfg.Effort != "" {
+		effort = ReasoningEffort(cfg.Effort)
+	}
+	switch cfg.Display {
+	case llm.DisplaySummarized:
+		summary = true
+	case llm.DisplayOmitted:
+		summary = false
+	}
+	return effort, summary, nil
+}
+
 // buildRequestBody serializes a llm.Request into Responses API format.
 func buildRequestBody(req llm.Request, effort ReasoningEffort, includeReasoningSummary bool) (io.Reader, error) {
 	if req.Model == "" {
@@ -119,9 +148,13 @@ func buildRequestBody(req llm.Request, effort ReasoningEffort, includeReasoningS
 		MaxOutput:    req.MaxTokens,
 	}
 
-	if effort != "" || includeReasoningSummary {
+	effort, summary, err := resolveReasoning(req.Thinking, effort, includeReasoningSummary)
+	if err != nil {
+		return nil, err
+	}
+	if effort != "" || summary {
 		body.Reasoning = &reasoningOpts{Effort: string(effort)}
-		if includeReasoningSummary {
+		if summary {
 			body.Reasoning.Summary = "auto"
 			body.Include = append(body.Include, "reasoning.encrypted_content")
 		}

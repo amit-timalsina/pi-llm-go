@@ -80,15 +80,28 @@ type Request struct {
 //     the adaptive shape (Opus 4.6+, required on 4.7+). BudgetTokens
 //     emits the manual shape (Opus 4.5- / Sonnet 3.7, deprecated on
 //     4.6 family).
-//   - **Gemini**: honors BudgetTokens only (mapped to thinkingBudget;
-//     -1=dynamic, 0=disabled). Effort is currently ignored on Gemini
-//     because Gemini's wire shape is an integer budget rather than an
-//     enum; revisit if Gemini ships an effort-style knob.
-//   - **OpenAI Chat Completions**: ignores the entire field;
-//     reasoning-effort dialects vary across compatible hosts and
-//     don't map portably.
-//   - **OpenAI Responses**: ignores this field; the provider routes
-//     reasoning-effort via its own Options.ReasoningEffort enum.
+//   - **Gemini**: Effort maps to thinkingLevel (Gemini 3+; Gemini 2.5
+//     rejects it), BudgetTokens to thinkingBudget (-1=dynamic,
+//     0=disabled). Exactly one goes on the wire — Effort wins.
+//   - **OpenAI Chat Completions**: Effort maps to reasoning_effort. The
+//     field is only sent when you set it, because non-reasoning models
+//     reject it outright. No reasoning text is returned here, so
+//     DisplaySummarized is refused rather than ignored.
+//   - **OpenAI Responses**: Effort maps to reasoning.effort and
+//     DisplaySummarized to reasoning.summary. Options.ReasoningEffort /
+//     Options.IncludeReasoningSummary remain the provider-level default
+//     for whatever the request leaves unset.
+//
+// A provider that cannot express what you asked for returns
+// ErrUnsupportedThinking rather than dropping it — BudgetTokens against
+// either OpenAI provider, for instance, since both size reasoning by
+// effort and neither takes a token budget.
+//
+// Reasoning tokens bill as output and count against the same cap:
+// MaxTokens on OpenAI covers reasoning plus visible text, so a budget
+// carried over from Anthropic can be spent entirely on reasoning and
+// return an empty message with no error. Usage.ReasoningTokens shows
+// where it went.
 //
 // Anthropic has two on-wire shapes for extended thinking, gated by
 // model:

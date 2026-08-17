@@ -343,3 +343,78 @@ func TestStreamReasoningUsage(t *testing.T) {
 		t.Errorf("Usage.CacheReadTokens=%d, want 24", final.Usage.CacheReadTokens)
 	}
 }
+
+func TestRequest_ThinkingEffortForwarded(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	if _, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    "gpt-5.5",
+		Thinking: &llm.ThinkingConfig{Effort: llm.EffortHigh},
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	if body["reasoning_effort"] != "high" {
+		t.Errorf("reasoning_effort=%v, want high", body["reasoning_effort"])
+	}
+}
+
+// Non-reasoning models reject reasoning_effort outright, so it must be
+// absent unless the caller asked for it.
+func TestRequest_NoThinkingOmitsReasoningEffort(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	if _, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    "gpt-4o",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	if _, present := body["reasoning_effort"]; present {
+		t.Errorf("unrequested reasoning_effort on the wire: %#v", body)
+	}
+}
+
+// What this provider cannot express must be reported, not dropped.
+func TestRequest_UnsupportedThinkingRejected(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  *llm.ThinkingConfig
+	}{
+		{"budget tokens", &llm.ThinkingConfig{BudgetTokens: 2048}},
+		{"summarized display", &llm.ThinkingConfig{Effort: llm.EffortHigh, Display: llm.DisplaySummarized}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := &fakeServer{payload: textOnlyPayload}
+			srv := httptest.NewServer(fs.handler())
+			defer srv.Close()
+			p := newProvider(t, srv)
+
+			_, err := llm.Complete(context.Background(), p, llm.Request{
+				Model:    "gpt-5.5",
+				Thinking: tc.cfg,
+				Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+			})
+			if err == nil {
+				t.Fatal("want ErrUnsupportedThinking, got nil")
+			}
+			if !errors.Is(err, llm.ErrUnsupportedThinking) {
+				t.Errorf("errors.Is(err, ErrUnsupportedThinking)=false: %v", err)
+			}
+			if !errors.Is(err, llm.ErrInvalidRequest) {
+				t.Errorf("must stay under ErrInvalidRequest: %v", err)
+			}
+		})
+	}
+}

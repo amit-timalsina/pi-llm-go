@@ -7,6 +7,14 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v1.5.0** shipped 2026-08-09 — `Request.Thinking` honoured per request
+  on both OpenAI providers and Gemini, plus `ErrUnsupportedThinking` for
+  what a provider genuinely cannot express. Closes #54 and #48 — the same
+  `llm.Request` used to mean "think hard" on Anthropic and nothing
+  elsewhere, and on Gemini it was worse than nothing: a dropped `Effort`
+  left `thinkingBudget: 0` on the wire, disabling thinking. Effort now
+  varies per call from one provider instance (`openai_responses` 146→167,
+  `gemini` 951→1465 reasoning tokens across low→high).
 - **v1.4.1** shipped 2026-08-09 — Gemini tool schemas go out in
   `parametersJsonSchema` instead of the OpenAPI-subset `parameters` field.
   Closes #50 — the subset rejects `$schema` / `additionalProperties` /
