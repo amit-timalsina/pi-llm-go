@@ -39,6 +39,7 @@ go get github.com/amit-timalsina/pi-llm-go
 - `providers/openai_responses` — OpenAI Responses API (`/v1/responses`). GPT-5 server-side state, reasoning summaries (mapped to `ThinkingBlock`), built-in tool primitives.
 - `providers/gemini` — Google Gemini (Generative Language API). Constants: `Gemini3_1ProPreview`, `Gemini2_5Pro`, `Gemini2_5Flash`, `Gemini2_5FlashLite`. Implements `llm.TokenCounter`. Native `VideoBlock` input. Captures and exactly replays stateless `thoughtSignature` metadata for text, thinking, and tool-call parts.
 - `providers/gemini/files` — Files API helper for >20 MB inputs (Upload / Wait / Get / Delete).
+- `providers/all` — build any provider from a config string: `all.Open(all.Spec{Provider: all.Name(cfg), APIKey: key, Retry: &r})`. `all.Names()` for validation; unknown name → `all.ErrUnknownProvider`; a field the provider can't honour → `all.ErrUnsupportedOption`. Links all four providers into the binary, so import it only when the provider is runtime-chosen.
 
 ## Companion library
 

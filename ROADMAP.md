@@ -7,6 +7,12 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v1.6.0** shipped 2026-08-17 — `providers/all`: build any provider from a
+  config string. Closes #55 — provider choice was unsupported, so consumers
+  duplicated a switch that encoded library-internal facts. A leaf package,
+  not `llm.Open`, because providers import the root. Converges with upstream
+  `pi-ai`'s registry shape; declines its generated model catalog and
+  `clampThinkingLevel`, which silently downgrades effort.
 - **v1.5.0** shipped 2026-08-09 — `Request.Thinking` honoured per request
   on both OpenAI providers and Gemini, plus `ErrUnsupportedThinking` for
   what a provider genuinely cannot express. Closes #54 and #48 — the same
