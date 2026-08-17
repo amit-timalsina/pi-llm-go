@@ -27,7 +27,8 @@ Requires Go 1.23+ (for `iter.Seq2`).
 | Strict / grammar-constrained tool input (`Tool.Strict`) | ✅ | ✅ | ✅ | ✅ |
 | Image input | ✅ | ✅ | ✅ | ✅ |
 | Video input | reject at wire | reject at wire | reject at wire | ✅ native |
-| Extended thinking | ✅ | — | ✅ (reasoning summaries) | ✅ |
+| Extended thinking | ✅ | ✅ (effort only, no text) | ✅ (reasoning summaries) | ✅ |
+| Per-request `Thinking.Effort` | ✅ | ✅ | ✅ | ✅ (Gemini 3+) |
 | Prompt caching (5m + 1h tier) | ✅ | automatic | automatic | single-TTL |
 | Cached-input `Usage` telemetry | ✅ | ✅ | ✅ | — |
 | Per-TTL cache-write Usage breakdown | ✅ | — | — | — |
@@ -140,7 +141,9 @@ See `examples/strict_tool_use` for the end-to-end pattern.
 - **Streaming-first.** `Stream()` returns `iter.Seq2[StreamEvent, error]` — Go 1.23 iterators, no callbacks, no goroutine leaks. `Complete()` is the synchronous helper for one-shot use.
 - **Sealed sum types.** `Block` and `StreamEvent` are interfaces with package-private marker methods. Type-switch exhaustively; the compiler tells you if you miss a case.
 - **Tool calling.** Declare tools on `Request.Tools`; receive `ToolCallBlock`s on the response; send `ToolResultBlock`s back. Pi-llm-go does not execute tools — that's [pi-agent-go](https://github.com/amit-timalsina/pi-agent-go)'s job.
-- **Extended thinking.** Set `Request.Thinking` and read `ThinkingBlock` content back. Two shapes on Anthropic: adaptive `ThinkingConfig{Effort: llm.EffortMedium}` (Opus 4.6+, **required** on 4.7+) or legacy `ThinkingConfig{BudgetTokens: N}` (Sonnet/Haiku); `Effort` wins when both are set. Add `Display: llm.DisplaySummarized` to the adaptive shape to stream summarized thinking **text** — on Opus 4.7+ the default is signature-only blocks with no text. OpenAI Responses exposes reasoning via its own `Options.ReasoningEffort` — note that its `ThinkingBlock`s are *not* replayed on subsequent requests, so reasoning continuity across a tool loop is lost there (tool calls themselves replay fine). Gemini `thoughtSignature` metadata is retained on the exact text, thinking, or tool-call block and replayed with assistant history.
+- **Extended thinking.** Set `Request.Thinking` and read `ThinkingBlock` content back. Two shapes on Anthropic: adaptive `ThinkingConfig{Effort: llm.EffortMedium}` (Opus 4.6+, **required** on 4.7+) or legacy `ThinkingConfig{BudgetTokens: N}` (Sonnet/Haiku); `Effort` wins when both are set. Add `Display: llm.DisplaySummarized` to the adaptive shape to stream summarized thinking **text** — on Opus 4.7+ the default is signature-only blocks with no text. `Effort` is honoured on every provider that has a counterpart: `reasoning.effort` on OpenAI Responses, `reasoning_effort` on OpenAI Chat Completions, `thinkingLevel` on Gemini 3+. `Options.ReasoningEffort` on OpenAI Responses is now the *default* for requests that don't set one, so effort can vary per call. What a provider cannot express — `BudgetTokens` on either OpenAI surface, `DisplaySummarized` on Chat Completions — returns `llm.ErrUnsupportedThinking` rather than being dropped. Its `ThinkingBlock`s are *not* replayed on subsequent requests, so reasoning continuity across an OpenAI Responses tool loop is lost (tool calls themselves replay fine); Gemini `thoughtSignature` metadata is retained on the exact text, thinking, or tool-call block and replayed with assistant history.
+
+**Reasoning tokens count against your output cap.** `MaxTokens` covers reasoning plus visible text, so a budget carried over from Anthropic can be spent entirely on reasoning and return an empty message with no error — `gpt-5` at effort `high` with a 2000-token cap spent 1984 on reasoning and emitted no text. `Usage.ReasoningTokens` shows where it went.
 - **Open-closed providers.** Implement `LLM.Stream` to add custom providers; no plugin registry needed.
 - **Errors that branch cleanly.** `errors.Is(err, llm.ErrRateLimit)` works through `*APIError` wraps; `errors.As(err, &apiErr)` gives you status + body.
 - **Cancellation = `context.Context`.** No bespoke abort signal types.

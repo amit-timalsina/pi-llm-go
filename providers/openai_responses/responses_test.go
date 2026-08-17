@@ -3,6 +3,7 @@ package openai_responses_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -487,4 +488,111 @@ func apiErrCast(target **llm.APIError, err error) bool {
 		cur = u.Unwrap()
 	}
 	return false
+}
+
+// Effort is a per-request field here now: a caller running a cheap
+// elicitation and an expensive authoring turn no longer needs two providers.
+func TestStreamRequestThinkingOverridesOptions(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p, _ := openai_responses.New(openai_responses.Options{
+		APIKey:          "test",
+		BaseURL:         srv.URL,
+		ReasoningEffort: openai_responses.ReasoningLow,
+	})
+
+	if _, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    "gpt-5.6-sol",
+		Thinking: &llm.ThinkingConfig{Effort: llm.EffortHigh, Display: llm.DisplaySummarized},
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	r, ok := body["reasoning"].(map[string]any)
+	if !ok {
+		t.Fatalf("no reasoning block: %#v", body)
+	}
+	if r["effort"] != "high" {
+		t.Errorf("effort=%v, want high (request beats Options)", r["effort"])
+	}
+	if r["summary"] != "auto" {
+		t.Errorf("summary=%v, want auto (DisplaySummarized)", r["summary"])
+	}
+}
+
+// DisplayOmitted turns a provider-level summary default back off.
+func TestStreamRequestDisplayOmittedSuppressesSummary(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p, _ := openai_responses.New(openai_responses.Options{
+		APIKey:                  "test",
+		BaseURL:                 srv.URL,
+		ReasoningEffort:         openai_responses.ReasoningMedium,
+		IncludeReasoningSummary: true,
+	})
+
+	if _, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    "gpt-5.6-sol",
+		Thinking: &llm.ThinkingConfig{Display: llm.DisplayOmitted},
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	r := body["reasoning"].(map[string]any)
+	if _, present := r["summary"]; present {
+		t.Errorf("summary present despite DisplayOmitted: %#v", r)
+	}
+	if r["effort"] != "medium" {
+		t.Errorf("effort=%v, want medium (Options fills the silence)", r["effort"])
+	}
+}
+
+// A provider built with a house effort keeps working when the request is
+// silent — the Options remain the default, not a dead field.
+func TestStreamOptionsRemainDefaultWithoutThinking(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p, _ := openai_responses.New(openai_responses.Options{
+		APIKey:          "test",
+		BaseURL:         srv.URL,
+		ReasoningEffort: openai_responses.ReasoningHigh,
+	})
+
+	if _, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    "gpt-5.6-sol",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	if body["reasoning"].(map[string]any)["effort"] != "high" {
+		t.Errorf("Options effort was lost: %#v", body["reasoning"])
+	}
+}
+
+func TestStreamBudgetTokensRejected(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	_, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    "gpt-5.6-sol",
+		Thinking: &llm.ThinkingConfig{BudgetTokens: 4096},
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	})
+	if err == nil {
+		t.Fatal("want ErrUnsupportedThinking, got nil")
+	}
+	if !errors.Is(err, llm.ErrUnsupportedThinking) {
+		t.Errorf("errors.Is(err, ErrUnsupportedThinking)=false: %v", err)
+	}
 }

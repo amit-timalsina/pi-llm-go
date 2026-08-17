@@ -27,6 +27,11 @@ type requestBody struct {
 	Temperature         *float64       `json:"temperature,omitempty"`
 	MaxCompletionTokens int            `json:"max_completion_tokens,omitempty"`
 	Stop                []string       `json:"stop,omitempty"`
+	// ReasoningEffort is only forwarded when the caller asks for it.
+	// Non-reasoning models reject the field outright ("Unrecognized request
+	// argument supplied: reasoning_effort"), and this package has no model
+	// registry to decide on the caller's behalf.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 // apiToolChoiceFunc is the object shape OpenAI uses when forcing a
@@ -154,9 +159,36 @@ type apiTool struct {
 	} `json:"function"`
 }
 
+// reasoningEffort maps Request.Thinking onto the reasoning_effort field.
+// Chat Completions sizes reasoning by effort and returns no reasoning text,
+// so BudgetTokens and DisplaySummarized are rejected rather than dropped —
+// a caller asking to see the model's thinking here would otherwise just get
+// a message with no ThinkingBlock and no explanation.
+func reasoningEffort(cfg *llm.ThinkingConfig) (string, error) {
+	if cfg == nil {
+		return "", nil
+	}
+	if cfg.Effort == "" && cfg.BudgetTokens > 0 {
+		return "", fmt.Errorf(
+			"%w: openai sizes reasoning by effort, not tokens; set ThinkingConfig.Effort instead of BudgetTokens",
+			llm.ErrUnsupportedThinking)
+	}
+	if cfg.Display == llm.DisplaySummarized {
+		return "", fmt.Errorf(
+			"%w: openai Chat Completions returns no reasoning text; use the openai_responses provider for summaries",
+			llm.ErrUnsupportedThinking)
+	}
+	return string(cfg.Effort), nil
+}
+
 func buildRequestBody(req llm.Request) (io.Reader, error) {
 	if req.Model == "" {
 		return nil, fmt.Errorf("model is required")
+	}
+
+	effort, err := reasoningEffort(req.Thinking)
+	if err != nil {
+		return nil, err
 	}
 
 	body := requestBody{
@@ -166,6 +198,7 @@ func buildRequestBody(req llm.Request) (io.Reader, error) {
 		Temperature:         req.Temperature,
 		MaxCompletionTokens: req.MaxTokens,
 		Stop:                req.StopReasons,
+		ReasoningEffort:     effort,
 	}
 
 	// System prompt becomes a prepended system message.

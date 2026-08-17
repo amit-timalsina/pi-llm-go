@@ -19,9 +19,11 @@ import (
 //	├─ ErrOverloaded      // HTTP 529 (Anthropic infra overload)
 //	└─ ErrMalformedStream // event stream violates the Start→Delta→End contract
 //
-//	ErrInvalidRequest     // HTTP 4xx (other than 401/403/429)
-//	├─ ErrContextLength   // prompt/output exceeds context window
-//	└─ ErrPolicyViolation // input flagged by provider safety policy
+//	ErrInvalidRequest        // HTTP 4xx (other than 401/403/429)
+//	├─ ErrContextLength      // prompt/output exceeds context window
+//	├─ ErrPolicyViolation    // input flagged by provider safety policy
+//	└─ ErrUnsupportedThinking // Request.Thinking asks for something this
+//	                          // provider cannot express (client-side)
 //
 // Child sentinels wrap their parents via fmt.Errorf("%w"), so existing
 // callers using errors.Is(err, ErrInvalidRequest) or
@@ -53,6 +55,13 @@ var (
 	// practice. Recommended consumer policy: do NOT retry; surface
 	// to the user or route through a moderation step.
 	ErrPolicyViolation = fmt.Errorf("%w: content policy violation", ErrInvalidRequest)
+	// ErrUnsupportedThinking signals that Request.Thinking asks for
+	// something this provider cannot put on the wire — e.g. BudgetTokens
+	// against OpenAI, which has no per-request reasoning budget. Raised
+	// before the request is sent, so it never carries an HTTP status.
+	// Dropping the field silently is worse: the caller gets a cheaper,
+	// shallower answer than it asked for and nothing says so.
+	ErrUnsupportedThinking = fmt.Errorf("%w: unsupported thinking configuration", ErrInvalidRequest)
 	// ErrMalformedStream signals that a provider's event stream broke the
 	// Start→Delta→End block contract — e.g. an EventToolCallEnd for a block
 	// no EventToolCallStart opened. Deliberately not retriable: misordered
@@ -251,6 +260,10 @@ func IsPolicyViolation(err error) bool { return errors.Is(err, ErrPolicyViolatio
 // IsMalformedStream reports whether err is a stream-contract violation.
 // Sugar for errors.Is(err, ErrMalformedStream).
 func IsMalformedStream(err error) bool { return errors.Is(err, ErrMalformedStream) }
+
+// IsUnsupportedThinking reports whether err is a thinking-config rejection.
+// Sugar for errors.Is(err, ErrUnsupportedThinking).
+func IsUnsupportedThinking(err error) bool { return errors.Is(err, ErrUnsupportedThinking) }
 
 // ParseRetryAfter extracts a wait hint from a provider response's
 // Retry-After / retry-after-ms headers. Returns 0 if no header is

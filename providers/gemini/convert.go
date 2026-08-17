@@ -174,12 +174,38 @@ type generationConfig struct {
 	ThinkingConfig  *thinkingCfg `json:"thinkingConfig,omitempty"`
 }
 
+// thinkingCfg carries exactly one sizing knob. ThinkingBudget is a pointer
+// because 0 is meaningful — it disables thinking — so an unset budget must
+// be absent from the wire rather than serialized as "turn thinking off".
 type thinkingCfg struct {
 	// ThinkingBudget is in tokens. -1 = dynamic (server chooses), 0 =
 	// disable thinking. Gemini 2.5 models think by default; setting to
 	// 0 is the only way to fully disable.
-	ThinkingBudget  int  `json:"thinkingBudget"`
-	IncludeThoughts bool `json:"includeThoughts,omitempty"`
+	ThinkingBudget *int `json:"thinkingBudget,omitempty"`
+	// ThinkingLevel is the Gemini 3+ analogue of llm.Effort. Gemini 2.5
+	// rejects it ("Thinking level is not supported for this model").
+	ThinkingLevel   string `json:"thinkingLevel,omitempty"`
+	IncludeThoughts bool   `json:"includeThoughts,omitempty"`
+}
+
+// thinkingConfigFor maps Request.Thinking onto Gemini's two sizing knobs:
+// Effort to thinkingLevel (Gemini 3+), BudgetTokens to thinkingBudget.
+//
+// Effort used to be dropped, which left BudgetTokens at its zero value and
+// put "thinkingBudget": 0 on the wire — the caller asked to think harder and
+// the request said think none, which Gemini 3 rejects outright.
+func thinkingConfigFor(cfg *llm.ThinkingConfig) *thinkingCfg {
+	if cfg == nil {
+		return nil
+	}
+	out := &thinkingCfg{IncludeThoughts: true}
+	if cfg.Effort != "" {
+		out.ThinkingLevel = string(cfg.Effort)
+		return out
+	}
+	budget := cfg.BudgetTokens
+	out.ThinkingBudget = &budget
+	return out
 }
 
 // buildRequestBody serializes a llm.Request into Gemini's wire format.
@@ -205,12 +231,7 @@ func buildRequestBody(req llm.Request) (io.Reader, error) {
 		MaxOutputTokens: req.MaxTokens,
 		StopSequences:   req.StopReasons,
 	}
-	if req.Thinking != nil {
-		gc.ThinkingConfig = &thinkingCfg{
-			ThinkingBudget:  req.Thinking.BudgetTokens,
-			IncludeThoughts: true,
-		}
-	}
+	gc.ThinkingConfig = thinkingConfigFor(req.Thinking)
 	if hasGenConfig(gc) {
 		body.GenerationConfig = gc
 	}

@@ -6,6 +6,55 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-09
+
+### Fixed
+
+- **`Request.Thinking` is honoured per request on OpenAI and Gemini instead
+  of being silently dropped.** The same `llm.Request` meant "think hard, show
+  me a summary" on Anthropic and nothing at all elsewhere, with no error —
+  a silent capability drop rather than a portability limit a caller could
+  plan around. Fixes [#54], and [#48] with it.
+
+  - `openai_responses`: `Effort` → `reasoning.effort`, `DisplaySummarized` →
+    `reasoning.summary`. `Options.ReasoningEffort` /
+    `Options.IncludeReasoningSummary` remain the default for whatever the
+    request leaves unset, so effort finally varies **per call** rather than
+    being frozen at construction. Verified live from one provider instance:
+    `effort=low` → 146 reasoning tokens, `effort=high` → 167.
+  - `openai` (Chat Completions): `Effort` → `reasoning_effort`, sent only
+    when the caller sets it — non-reasoning models reject the field
+    (`Unrecognized request argument supplied: reasoning_effort`) and this
+    package has no model registry to decide on their behalf.
+  - `gemini`: `Effort` → `thinkingLevel` (Gemini 3+). Previously `Effort`
+    was dropped, which left `BudgetTokens` at zero and put
+    `"thinkingBudget": 0` on the wire — *disable* thinking, the opposite of
+    the request, and a hard 400 on Gemini 3 (`Budget 0 is invalid`). Live:
+    `effort=low` → 951 reasoning tokens, `effort=high` → 1465. Gemini 2.5
+    has no `thinkingLevel` and now says so (`Thinking level is not supported
+    for this model`) instead of silently thinking not at all.
+
+### Added
+
+- **`ErrUnsupportedThinking`** (+ `IsUnsupportedThinking` sugar) — returned
+  when `Request.Thinking` asks for something a provider cannot put on the
+  wire, instead of dropping it. `BudgetTokens` against either OpenAI
+  provider (both size reasoning by effort, neither takes a token budget), or
+  `DisplaySummarized` against Chat Completions (which returns no reasoning
+  text at all). Wraps `ErrInvalidRequest`, so existing subtree checks keep
+  matching. Raised before the request is sent, so it carries no HTTP status.
+
+### Documentation
+
+- `ThinkingConfig` now carries the honest per-provider mapping table, and
+  records that **reasoning tokens count against the same output cap**: a
+  `MaxTokens` carried over from Anthropic can be spent entirely on reasoning
+  and return an empty message with no error. `Usage.ReasoningTokens` shows
+  where it went.
+
+[#48]: https://github.com/amit-timalsina/pi-llm-go/issues/48
+[#54]: https://github.com/amit-timalsina/pi-llm-go/issues/54
+
 ## [1.4.1] - 2026-08-09
 
 ### Fixed
@@ -865,7 +914,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.2.0...v1.3.0

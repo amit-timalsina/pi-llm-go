@@ -885,3 +885,88 @@ func TestNew_RequiresAPIKey(t *testing.T) {
 		t.Error("expected error when APIKey is empty")
 	}
 }
+
+// Effort maps to thinkingLevel (Gemini 3+). It must not also emit a
+// thinkingBudget: the zero value there means "disable thinking", which is
+// the opposite of the request and which Gemini 3 rejects outright.
+func TestRequest_ThinkingEffortMapsToLevel(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	if _, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    gemini.Gemini2_5Flash,
+		Thinking: &llm.ThinkingConfig{Effort: llm.EffortHigh},
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	tc := thinkingConfigFromBody(t, fs.lastBody)
+	if tc["thinkingLevel"] != "high" {
+		t.Errorf("thinkingLevel=%v, want high", tc["thinkingLevel"])
+	}
+	if _, present := tc["thinkingBudget"]; present {
+		t.Errorf("adaptive request must not carry a budget: %#v", tc)
+	}
+}
+
+func TestRequest_ThinkingBudgetMapsToBudget(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	if _, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    gemini.Gemini2_5Flash,
+		Thinking: &llm.ThinkingConfig{BudgetTokens: 1024},
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	tc := thinkingConfigFromBody(t, fs.lastBody)
+	if tc["thinkingBudget"] != float64(1024) {
+		t.Errorf("thinkingBudget=%v, want 1024", tc["thinkingBudget"])
+	}
+	if _, present := tc["thinkingLevel"]; present {
+		t.Errorf("manual request must not carry a level: %#v", tc)
+	}
+}
+
+func TestRequest_NoThinkingOmitsConfig(t *testing.T) {
+	fs := &fakeServer{payload: textOnlyPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	if _, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    gemini.Gemini2_5Flash,
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(fs.lastBody, &body)
+	gc, ok := body["generationConfig"].(map[string]any)
+	if !ok {
+		return // no generationConfig at all is also correct
+	}
+	if _, present := gc["thinkingConfig"]; present {
+		t.Errorf("unrequested thinking config on the wire: %#v", gc)
+	}
+}
+
+func thinkingConfigFromBody(t *testing.T, body json.RawMessage) map[string]any {
+	t.Helper()
+	var decoded struct {
+		GenerationConfig struct {
+			ThinkingConfig map[string]any `json:"thinkingConfig"`
+		} `json:"generationConfig"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	return decoded.GenerationConfig.ThinkingConfig
+}

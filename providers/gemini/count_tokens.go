@@ -127,12 +127,7 @@ func buildCountInnerBody(req llm.Request) (*generateContentForCount, error) {
 		MaxOutputTokens: req.MaxTokens,
 		StopSequences:   req.StopReasons,
 	}
-	if req.Thinking != nil {
-		gc.ThinkingConfig = &thinkingCfg{
-			ThinkingBudget:  req.Thinking.BudgetTokens,
-			IncludeThoughts: true,
-		}
-	}
+	gc.ThinkingConfig = thinkingConfigFor(req.Thinking)
 	if hasGenConfig(gc) {
 		out.GenerationConfig = gc
 	}
