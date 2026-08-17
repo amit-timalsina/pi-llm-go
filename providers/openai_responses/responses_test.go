@@ -596,3 +596,135 @@ func TestStreamBudgetTokensRejected(t *testing.T) {
 		t.Errorf("errors.Is(err, ErrUnsupportedThinking)=false: %v", err)
 	}
 }
+
+// incompletePayload is the terminal frame OpenAI sends when a response stops
+// at max_output_tokens. Routing it to default emitted no EventMessageEnd at
+// all, so truncation was indistinguishable from a finished turn.
+const incompletePayload = `event: response.created
+data: {"type":"response.created","response":{"id":"resp_9","model":"gpt-5.6-sol","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_9","status":"in_progress","role":"assistant","content":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","output_index":0,"delta":"The history of cartography beg"}
+
+event: response.incomplete
+data: {"type":"response.incomplete","response":{"id":"resp_9","model":"gpt-5.6-sol","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":24,"output_tokens":32000,"output_tokens_details":{"reasoning_tokens":1776},"total_tokens":32024}}}
+
+`
+
+func TestStreamIncompleteReportsMaxTokens(t *testing.T) {
+	fs := &fakeServer{payload: incompletePayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	var end *llm.EventMessageEnd
+	for ev, err := range p.Stream(context.Background(), llm.Request{
+		Model:    "gpt-5.6-sol",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "essay"}}}},
+	}) {
+		if err != nil {
+			t.Fatalf("Stream: %v", err)
+		}
+		if e, ok := ev.(llm.EventMessageEnd); ok {
+			end = &e
+		}
+	}
+	if end == nil {
+		t.Fatal("no EventMessageEnd on an incomplete response")
+	}
+	if end.StopReason != llm.StopReasonMaxTokens {
+		t.Errorf("StopReason=%v, want MaxTokens", end.StopReason)
+	}
+	if end.Usage.OutputTokens != 32000 {
+		t.Errorf("Usage.OutputTokens=%d, want 32000", end.Usage.OutputTokens)
+	}
+	if end.Usage.ReasoningTokens != 1776 {
+		t.Errorf("Usage.ReasoningTokens=%d, want 1776", end.Usage.ReasoningTokens)
+	}
+}
+
+// Complete must surface the truncation too, since that is what most callers
+// use to decide whether to retry with a smaller request.
+func TestCompleteIncompleteSurfacesMaxTokens(t *testing.T) {
+	fs := &fakeServer{payload: incompletePayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	msg, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    "gpt-5.6-sol",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "essay"}}}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if msg.StopReason != llm.StopReasonMaxTokens {
+		t.Errorf("StopReason=%v, want MaxTokens", msg.StopReason)
+	}
+}
+
+// response.failed must stay on the error path — incomplete and failed are
+// different outcomes and must not be conflated.
+func TestStreamFailedStillErrors(t *testing.T) {
+	const failedPayload = `event: response.created
+data: {"type":"response.created","response":{"id":"resp_10","model":"gpt-5.6-sol","status":"in_progress"}}
+
+event: response.failed
+data: {"type":"response.failed","response":{"id":"resp_10","status":"failed","error":{"code":"server_error","message":"upstream exploded"}}}
+
+`
+	fs := &fakeServer{payload: failedPayload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	var gotErr error
+	for _, err := range p.Stream(context.Background(), llm.Request{
+		Model:    "gpt-5.6-sol",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	}) {
+		if err != nil {
+			gotErr = err
+		}
+	}
+	if gotErr == nil {
+		t.Fatal("response.failed must surface an error")
+	}
+	if !strings.Contains(gotErr.Error(), "upstream exploded") {
+		t.Errorf("error should carry the provider body: %v", gotErr)
+	}
+	if errors.Is(gotErr, llm.ErrMalformedStream) {
+		t.Error("a failed response is not a malformed stream")
+	}
+}
+
+// A clean close with no terminal frame is truncation, not an end of turn.
+func TestStreamNoTerminalFrameIsMalformed(t *testing.T) {
+	const truncated = `event: response.created
+data: {"type":"response.created","response":{"id":"resp_11","model":"gpt-5.6-sol","status":"in_progress"}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","output_index":0,"delta":"cut off mid"}
+
+`
+	fs := &fakeServer{payload: truncated}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	var gotErr error
+	for _, err := range p.Stream(context.Background(), llm.Request{
+		Model:    "gpt-5.6-sol",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	}) {
+		if err != nil {
+			gotErr = err
+		}
+	}
+	if !errors.Is(gotErr, llm.ErrMalformedStream) {
+		t.Fatalf("want ErrMalformedStream, got %v", gotErr)
+	}
+}

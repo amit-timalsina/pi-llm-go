@@ -16,8 +16,9 @@ var errIterationStopped = errors.New("iteration stopped")
 // Responses protocol surfaces 53 distinct event types; this decoder
 // handles the core subset:
 //
-//   - Lifecycle: response.created, response.completed, response.failed,
-//     error.
+//   - Lifecycle: response.created, response.completed, response.incomplete,
+//     response.failed, error. A clean close with none of the terminal three
+//     is reported as llm.ErrMalformedStream rather than ending quietly.
 //   - Text output: response.output_text.delta, response.output_text.done.
 //   - Function tool calls: response.function_call_arguments.delta,
 //     response.function_call_arguments.done.
@@ -44,6 +45,7 @@ type streamDecoder struct {
 
 	model        string
 	emittedStart bool
+	emittedEnd   bool
 }
 
 type toolCallMeta struct {
@@ -84,7 +86,11 @@ func (d *streamDecoder) decode(r io.Reader, yield func(llm.StreamEvent, error) b
 			return d.handleReasoningSummaryDelta(f.Data, yield, &stopped)
 		case "response.reasoning_summary_text.done":
 			return d.handleReasoningSummaryDone(f.Data, yield, &stopped)
-		case "response.completed":
+		case "response.completed", "response.incomplete":
+			// response.incomplete is the terminal frame for a max_output_tokens
+			// stop, and carries the same status / incomplete_details shape.
+			// Dropping it emitted no EventMessageEnd at all, so a truncated
+			// response was indistinguishable from a stream that just ended.
 			return d.handleCompleted(f.Data, yield, &stopped)
 		case "response.failed", "error":
 			return d.handleErrorFrame(f.Data)
@@ -97,7 +103,18 @@ func (d *streamDecoder) decode(r io.Reader, yield func(llm.StreamEvent, error) b
 	if errors.Is(err, errIterationStopped) {
 		return err
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if d.emittedStart && !d.emittedEnd {
+		// The API always terminates with completed / failed / incomplete. A
+		// clean close without one means the response was cut off mid-flight;
+		// ending the iterator silently makes truncation look like a finished
+		// turn.
+		return fmt.Errorf("%w: stream ended after response.created with no terminal frame",
+			llm.ErrMalformedStream)
+	}
+	return nil
 }
 
 func (d *streamDecoder) handleCreated(data string, yield func(llm.StreamEvent, error) bool, stopped *bool) error {
@@ -327,7 +344,7 @@ func (d *streamDecoder) handleCompleted(data string, yield func(llm.StreamEvent,
 		} `json:"response"`
 	}
 	if err := json.Unmarshal([]byte(data), &ev); err != nil {
-		return fmt.Errorf("response.completed: %w", err)
+		return fmt.Errorf("response terminal frame: %w", err)
 	}
 	incompleteReason := ""
 	if ev.Response.IncompleteDetails != nil {
@@ -350,6 +367,7 @@ func (d *streamDecoder) handleCompleted(data string, yield func(llm.StreamEvent,
 			usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 		}
 	}
+	d.emittedEnd = true
 	if !yield(llm.EventMessageEnd{StopReason: stop, Usage: usage}, nil) {
 		*stopped = true
 		return errIterationStopped

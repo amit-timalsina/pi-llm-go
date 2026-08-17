@@ -7,6 +7,11 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v1.7.1** shipped 2026-08-17 — route `response.incomplete` on
+  `openai_responses`, and report a stream that closes with no terminal frame.
+  Closes #60 — a `max_output_tokens` stop emitted no `EventMessageEnd` at
+  all, so truncation was undetectable on this provider and two 20-minute
+  authoring runs died on it. The handling existed and was unreachable.
 - **v1.7.0** shipped 2026-08-17 — provider-qualified model ids
   (`all.OpenModel` / `all.ParseModel`). Closes #58 — provider and model were
   two config values that had to agree, and deriving one from a name prefix
