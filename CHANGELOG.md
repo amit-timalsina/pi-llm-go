@@ -6,6 +6,39 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-08-17
+
+### Fixed
+
+- **`openai_responses`: a `max_output_tokens` stop now reports itself.**
+  `response.incomplete` — the terminal frame OpenAI sends when a response
+  hits the cap — was not in the lifecycle switch, so it fell to `default` and
+  was dropped. `handleCompleted` never ran, so the stream emitted **no
+  `EventMessageEnd` at all**: no `StopReason`, no `Usage`, and nothing to tell
+  a caller the response was truncated rather than finished. Measured live on
+  `gpt-5.6-sol` with a 64-token cap:
+
+  ```
+  before: stop=          out=0   reasoning=0   truncation detectable: false
+  after:  stop=max_tokens out=64  reasoning=64  truncation detectable: true
+  ```
+
+  Every piece of handling already existed and was unreachable —
+  `stopReasonFromStatus` has an `incomplete` arm mapping
+  `incomplete_details.reason == "max_output_tokens"` to
+  `StopReasonMaxTokens`. It was a routing gap, not a missing feature. Fixes
+  [#60].
+
+- **A Responses stream that closes with no terminal frame is now reported.**
+  The API always ends with `response.completed` / `.incomplete` / `.failed`;
+  a clean close without one means the response was cut off mid-flight. That
+  used to end the iterator silently, which is what made the bug above present
+  as "the events just stopped". It now returns `llm.ErrMalformedStream`, so
+  truncation is never indistinguishable from a finished turn on this
+  provider.
+
+[#60]: https://github.com/amit-timalsina/pi-llm-go/issues/60
+
 ## [1.7.0] - 2026-08-17
 
 ### Added
@@ -995,7 +1028,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.4.1...v1.5.0
