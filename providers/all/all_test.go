@@ -120,3 +120,108 @@ func typeString(v any) string {
 		return "unknown"
 	}
 }
+
+func TestParseModelSplitsProviderAndBareID(t *testing.T) {
+	cases := []struct {
+		qualified string
+		wantName  all.Name
+		wantModel string
+	}{
+		{"anthropic:claude-opus-4-7", all.Anthropic, "claude-opus-4-7"},
+		{"openai_responses:gpt-5.6-sol", all.OpenAIResponses, "gpt-5.6-sol"},
+		{"openai:o3", all.OpenAI, "o3"},
+		{"gemini:gemini-3.1-pro-preview", all.Gemini, "gemini-3.1-pro-preview"},
+		// A gateway model whose own id contains a slash.
+		{"openai:anthropic/claude-opus-5", all.OpenAI, "anthropic/claude-opus-5"},
+		// An OpenAI fine-tune id contains colons of its own; the split is on
+		// the first one, so the model half survives intact.
+		{"openai:ft:gpt-4o-mini:acme::abc123", all.OpenAI, "ft:gpt-4o-mini:acme::abc123"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.qualified, func(t *testing.T) {
+			name, model, err := all.ParseModel(tc.qualified)
+			if err != nil {
+				t.Fatalf("ParseModel: %v", err)
+			}
+			if name != tc.wantName {
+				t.Errorf("provider=%q, want %q", name, tc.wantName)
+			}
+			if model != tc.wantModel {
+				t.Errorf("model=%q, want %q", model, tc.wantModel)
+			}
+		})
+	}
+}
+
+// A bare name is refused rather than guessed at, and the error teaches the
+// qualified form.
+func TestParseModelRejectsUnqualified(t *testing.T) {
+	for _, bare := range []string{"gpt-5.6-sol", "claude-opus-4-7", "", ":gpt-4o", "openai:"} {
+		t.Run(bare, func(t *testing.T) {
+			_, _, err := all.ParseModel(bare)
+			if !errors.Is(err, all.ErrUnqualifiedModel) {
+				t.Fatalf("want ErrUnqualifiedModel, got %v", err)
+			}
+			for _, n := range all.Names() {
+				if !strings.Contains(err.Error(), string(n)) {
+					t.Errorf("error should list %q: %v", n, err)
+				}
+			}
+		})
+	}
+}
+
+// An unknown prefix is an unknown provider, not an unqualified id — the
+// caller can tell "you forgot the prefix" from "that provider isn't real".
+func TestParseModelRejectsUnknownPrefix(t *testing.T) {
+	_, _, err := all.ParseModel("claude:claude-opus-4-7")
+	if !errors.Is(err, all.ErrUnknownProvider) {
+		t.Fatalf("want ErrUnknownProvider, got %v", err)
+	}
+	if errors.Is(err, all.ErrUnqualifiedModel) {
+		t.Error("an unknown prefix must not also report as unqualified")
+	}
+}
+
+func TestOpenModelReturnsProviderAndBareID(t *testing.T) {
+	p, model, err := all.OpenModel("openai_responses:gpt-5.6-sol", all.Spec{APIKey: "k"})
+	if err != nil {
+		t.Fatalf("OpenModel: %v", err)
+	}
+	if got := typeString(p); got != "*openai_responses.Provider" {
+		t.Errorf("built %s", got)
+	}
+	// The qualified form must never reach llm.Request.Model.
+	if model != "gpt-5.6-sol" {
+		t.Errorf("model=%q, want the bare id", model)
+	}
+}
+
+// Azure: same model name, different endpoint and auth — the case a name
+// prefix cannot express.
+func TestOpenModelCarriesAzureShape(t *testing.T) {
+	p, model, err := all.OpenModel("openai_responses:gpt-4o", all.Spec{
+		APIKey:  "k",
+		URL:     "https://example.openai.azure.com/openai/v1/responses?api-version=preview",
+		Headers: map[string]string{"api-key": "k"},
+	})
+	if err != nil {
+		t.Fatalf("OpenModel: %v", err)
+	}
+	if model != "gpt-4o" || typeString(p) != "*openai_responses.Provider" {
+		t.Errorf("model=%q provider=%s", model, typeString(p))
+	}
+}
+
+func TestOpenModelRejectsContradictingSpecProvider(t *testing.T) {
+	_, _, err := all.OpenModel("anthropic:claude-opus-4-7", all.Spec{Provider: all.Gemini, APIKey: "k"})
+	if !errors.Is(err, all.ErrConflictingProvider) {
+		t.Fatalf("want ErrConflictingProvider, got %v", err)
+	}
+}
+
+func TestOpenModelAllowsAgreeingSpecProvider(t *testing.T) {
+	if _, _, err := all.OpenModel("gemini:gemini-2.5-flash", all.Spec{Provider: all.Gemini, APIKey: "k"}); err != nil {
+		t.Fatalf("agreeing Spec.Provider should be fine: %v", err)
+	}
+}

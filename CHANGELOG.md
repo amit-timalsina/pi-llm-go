@@ -6,6 +6,45 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-08-17
+
+### Added
+
+- **Provider-qualified model ids in `providers/all`.** `Open` took a provider
+  name and `llm.Request` took a model, with nothing connecting them, so
+  configuring "which model do I run" meant two settings that had to agree —
+  or deriving one from a name prefix, which misroutes silently.
+
+  ```go
+  p, model, err := all.OpenModel("openai_responses:gpt-5.6-sol", all.Spec{APIKey: key})
+  msg, err := llm.Complete(ctx, p, llm.Request{Model: model, ...})
+  ```
+
+  `all.ParseModel` does the split alone, for validating config at startup
+  without constructing anything. The split is on the **first** colon, so a
+  model id carrying colons of its own survives intact —
+  `openai:ft:gpt-4o-mini:acme::abc123` yields the openai provider and
+  `ft:gpt-4o-mini:acme::abc123`.
+
+  A bare id returns `all.ErrUnqualifiedModel` listing the qualified forms
+  rather than being guessed at, and an unrecognised prefix returns
+  `all.ErrUnknownProvider` — distinguishable, so "you forgot the prefix" and
+  "that provider isn't real" are different answers. A qualified id that
+  contradicts `Spec.Provider` returns `all.ErrConflictingProvider` instead of
+  one silently winning.
+
+  Prefix rules misroute where it already matters: Azure serves `gpt-4o` at
+  its own endpoint with its own auth (`openai_responses:gpt-4o` plus `URL` and
+  `Headers` expresses it), a gateway serves `anthropic/claude-*` over an
+  OpenAI-shaped API, and the next naming change breaks the rule without
+  saying so. Closes [#58].
+
+  This is syntax, not the model catalog declined in v1.6.0: it carries no
+  opinion about what a model can do, so it cannot go stale and cannot
+  substitute one thing for another.
+
+[#58]: https://github.com/amit-timalsina/pi-llm-go/issues/58
+
 ## [1.6.0] - 2026-08-17
 
 ### Added
@@ -956,7 +995,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.4.0...v1.4.1

@@ -44,6 +44,18 @@ const (
 // provider. Branch on it with errors.Is.
 var ErrUnknownProvider = errors.New("all: unknown provider")
 
+// ErrUnqualifiedModel is returned when a model id carries no provider
+// prefix. Guessing the provider from a name prefix is the alternative, and
+// it misroutes silently: Azure serves gpt-4o at its own endpoint, a gateway
+// serves anthropic/claude-* over an OpenAI-shaped API, and the next model
+// naming change breaks the rule without saying so.
+var ErrUnqualifiedModel = errors.New("all: model id is not provider-qualified")
+
+// ErrConflictingProvider is returned when a qualified id and Spec.Provider
+// name different providers. One of the two is wrong and neither can be
+// preferred without guessing.
+var ErrConflictingProvider = errors.New("all: qualified model id contradicts Spec.Provider")
+
 // ErrUnsupportedOption is returned when a Spec field has no counterpart on
 // the chosen provider — Headers against Anthropic, say. Dropping the field
 // silently would hand back a provider configured differently than the
@@ -77,6 +89,65 @@ type Spec struct {
 // validating config and building help text.
 func Names() []Name {
 	return []Name{Anthropic, OpenAI, OpenAIResponses, Gemini}
+}
+
+// ParseModel splits a provider-qualified model id — "openai_responses:gpt-5.6-sol"
+// — into its provider and the bare model id to put in llm.Request.Model.
+// Use it to validate configuration at startup without constructing anything.
+//
+// The split is on the FIRST colon, so a model id that contains colons of its
+// own survives intact: "openai:ft:gpt-4o-mini:acme::abc123" parses to the
+// openai provider and "ft:gpt-4o-mini:acme::abc123".
+//
+// This is syntax, not a model catalog. It carries no opinion about what a
+// model can do, so it never goes stale and never substitutes one thing for
+// another.
+func ParseModel(qualified string) (Name, string, error) {
+	prefix, model, found := strings.Cut(qualified, ":")
+	if !found || prefix == "" || model == "" {
+		return "", "", fmt.Errorf("%w: %q (want %q, one of %s)",
+			ErrUnqualifiedModel, qualified, "<provider>:<model>", joinNames())
+	}
+	name := Name(prefix)
+	if !known(name) {
+		return "", "", fmt.Errorf("%w: %q in %q (want one of %s)",
+			ErrUnknownProvider, prefix, qualified, joinNames())
+	}
+	return name, model, nil
+}
+
+// OpenModel constructs the provider named by a qualified model id and
+// returns it with the bare model id, so one config value settles routing
+// instead of two that must agree:
+//
+//	p, model, err := all.OpenModel(cfg.Model, all.Spec{APIKey: key})
+//	msg, err := llm.Complete(ctx, p, llm.Request{Model: model, ...})
+//
+// Spec.Provider may be left empty; if set, it must agree with the prefix.
+func OpenModel(qualified string, spec Spec) (llm.LLM, string, error) {
+	name, model, err := ParseModel(qualified)
+	if err != nil {
+		return nil, "", err
+	}
+	if spec.Provider != "" && spec.Provider != name {
+		return nil, "", fmt.Errorf("%w: %q names %q, Spec.Provider is %q",
+			ErrConflictingProvider, qualified, name, spec.Provider)
+	}
+	spec.Provider = name
+	p, err := Open(spec)
+	if err != nil {
+		return nil, "", err
+	}
+	return p, model, nil
+}
+
+func known(n Name) bool {
+	for _, candidate := range Names() {
+		if candidate == n {
+			return true
+		}
+	}
+	return false
 }
 
 // Open constructs the named provider. The returned llm.LLM behaves exactly
