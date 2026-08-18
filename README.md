@@ -254,18 +254,22 @@ Non-2xx HTTP responses surface as `*llm.APIError` wrapping one of the typed sent
 ```
 ErrAuth             // 401, 403
 ErrRateLimit        // 429
-ErrInvalidRequest   // other 4xx (parent of the next two)
+ErrInvalidRequest   // other 4xx (parent of the next three)
 ├─ ErrContextLength // prompt / max_tokens exceeds the model's window
-└─ ErrPolicyViolation // input rejected by content / safety policy
-ErrProvider         // generic provider problem (parent of the next three)
+├─ ErrPolicyViolation // input rejected by content / safety policy
+└─ ErrUnsupportedThinking // Request.Thinking asks for what this provider can't express
+ErrProvider         // generic provider problem (parent of the next four)
 ├─ ErrServerError   // 5xx (excluding 529)
 ├─ ErrOverloaded    // 529 (Anthropic infra overload)
-└─ ErrMalformedStream // event stream broke the Start→Delta→End contract
+├─ ErrMalformedStream // event stream broke the Start→Delta→End contract
+└─ ErrFrameTooLarge   // a single SSE frame exceeded what we will read
 ```
 
-`ErrServerError`, `ErrOverloaded` and `ErrMalformedStream` all wrap `ErrProvider`; `ErrContextLength` and `ErrPolicyViolation` both wrap `ErrInvalidRequest`. Legacy `errors.Is(err, ErrProvider)` and `errors.Is(err, ErrInvalidRequest)` callers keep matching the full subtree.
+`ErrServerError`, `ErrOverloaded`, `ErrMalformedStream` and `ErrFrameTooLarge` all wrap `ErrProvider`; `ErrContextLength`, `ErrPolicyViolation` and `ErrUnsupportedThinking` all wrap `ErrInvalidRequest`. Legacy `errors.Is(err, ErrProvider)` and `errors.Is(err, ErrInvalidRequest)` callers keep matching the full subtree.
 
-`ErrMalformedStream` is the one sentinel that isn't an HTTP failure: `Accumulate` (and therefore `Complete`) returns it when a provider emits an `EventToolCallEnd` for a block no `EventToolCallStart` ever opened. It is deliberately **not** retriable — misordered events are usually a deterministic provider-implementation bug, not a transient fault.
+`ErrFrameTooLarge` and `ErrMalformedStream` are the sentinels that aren't HTTP failures. The first fires when a provider sends a single SSE line beyond 32 MB — a memory backstop, not a tuned budget; the second when the event stream breaks its own contract. Neither is retriable, because the same request reproduces both.
+
+`ErrMalformedStream` in detail: `Accumulate` (and therefore `Complete`) returns it when a provider emits an `EventToolCallEnd` for a block no `EventToolCallStart` ever opened. It is deliberately **not** retriable — misordered events are usually a deterministic provider-implementation bug, not a transient fault.
 
 The finer 4xx sentinels are derived by inspecting the response body — provider error schemas don't carry a canonical machine-readable category for "context too long" vs "policy violation," so pi-llm-go pattern-matches the message text. Patterns cover Anthropic / OpenAI / Gemini current shapes. For structured per-provider decoding, branch on `apiErr.Body` directly.
 

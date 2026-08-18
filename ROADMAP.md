@@ -7,6 +7,13 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v1.8.0** shipped 2026-08-17 — SSE frames are no longer bounded by a
+  per-provider `bufio.Scanner` token limit, plus `ErrFrameTooLarge`. Closes
+  #62 — three providers inherited a 1 MB default and one set 4 MB, so the
+  provider with the largest frames held the smallest budget and lost whole
+  13-minute turns to `bufio.ErrTooLong`, which no consumer retry can catch.
+  Lines now accumulate across buffer fills; the 32 MB cap is a memory
+  backstop, not a tuned budget, and exceeding it is typed.
 - **v1.7.1** shipped 2026-08-17 — route `response.incomplete` on
   `openai_responses`, and report a stream that closes with no terminal frame.
   Closes #60 — a `max_output_tokens` stop emitted no `EventMessageEnd` at

@@ -63,7 +63,7 @@ func newStreamDecoder() *streamDecoder {
 
 func (d *streamDecoder) decode(r io.Reader, yield func(llm.StreamEvent, error) bool) error {
 	stopped := false
-	err := sse.Read(r, 0, func(f sse.Frame) error {
+	err := sse.Read(r, func(f sse.Frame) error {
 		if stopped {
 			return errIterationStopped
 		}
