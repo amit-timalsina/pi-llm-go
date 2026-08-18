@@ -728,3 +728,46 @@ data: {"type":"response.output_text.delta","output_index":0,"delta":"cut off mid
 		t.Fatalf("want ErrMalformedStream, got %v", gotErr)
 	}
 }
+
+// The terminal frame carries the whole response object, including
+// reasoning.encrypted_content, whose size the client does not control. A
+// frame past the old 1 MB scanner ceiling must still complete the turn —
+// this provider used to die on it with "bufio.Scanner: token too long".
+func TestStreamOversizedTerminalFrame(t *testing.T) {
+	blob := strings.Repeat("x", 3*1024*1024)
+	payload := `event: response.created
+data: {"type":"response.created","response":{"id":"resp_big","model":"gpt-5.6-sol","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_big","status":"in_progress","role":"assistant","content":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","output_index":0,"delta":"done"}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_big","model":"gpt-5.6-sol","status":"completed","encrypted_content":"` + blob + `","usage":{"input_tokens":9,"output_tokens":2,"total_tokens":11}}}
+
+`
+	fs := &fakeServer{payload: payload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	msg, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    "gpt-5.6-sol",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if msg.StopReason != llm.StopReasonEnd {
+		t.Errorf("StopReason=%v, want End", msg.StopReason)
+	}
+	if msg.Usage.OutputTokens != 2 {
+		t.Errorf("Usage.OutputTokens=%d, want 2", msg.Usage.OutputTokens)
+	}
+	tb, ok := msg.Content[0].(llm.TextBlock)
+	if !ok || tb.Text != "done" {
+		t.Errorf("Content[0]=%+v, want TextBlock{done}", msg.Content[0])
+	}
+}

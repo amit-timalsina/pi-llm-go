@@ -17,7 +17,8 @@ import (
 //	ErrProvider           // generic "something provider-side broke"
 //	├─ ErrServerError     // HTTP 5xx (excluding 529)
 //	├─ ErrOverloaded      // HTTP 529 (Anthropic infra overload)
-//	└─ ErrMalformedStream // event stream violates the Start→Delta→End contract
+//	├─ ErrMalformedStream // event stream violates the Start→Delta→End contract
+//	└─ ErrFrameTooLarge   // a single SSE frame exceeded what we will read
 //
 //	ErrInvalidRequest        // HTTP 4xx (other than 401/403/429)
 //	├─ ErrContextLength      // prompt/output exceeds context window
@@ -62,6 +63,11 @@ var (
 	// Dropping the field silently is worse: the caller gets a cheaper,
 	// shallower answer than it asked for and nothing says so.
 	ErrUnsupportedThinking = fmt.Errorf("%w: unsupported thinking configuration", ErrInvalidRequest)
+	// ErrFrameTooLarge signals that a provider sent a single SSE line larger
+	// than sse.MaxFrameBytes. Distinct from a transport fault, which is why it
+	// is typed: the same request produces the same frame, so a retry changes
+	// nothing. Not retriable.
+	ErrFrameTooLarge = fmt.Errorf("%w: SSE frame too large", ErrProvider)
 	// ErrMalformedStream signals that a provider's event stream broke the
 	// Start→Delta→End block contract — e.g. an EventToolCallEnd for a block
 	// no EventToolCallStart opened. Deliberately not retriable: misordered
@@ -260,6 +266,10 @@ func IsPolicyViolation(err error) bool { return errors.Is(err, ErrPolicyViolatio
 // IsMalformedStream reports whether err is a stream-contract violation.
 // Sugar for errors.Is(err, ErrMalformedStream).
 func IsMalformedStream(err error) bool { return errors.Is(err, ErrMalformedStream) }
+
+// IsFrameTooLarge reports whether err is an oversized-SSE-frame rejection.
+// Sugar for errors.Is(err, ErrFrameTooLarge).
+func IsFrameTooLarge(err error) bool { return errors.Is(err, ErrFrameTooLarge) }
 
 // IsUnsupportedThinking reports whether err is a thinking-config rejection.
 // Sugar for errors.Is(err, ErrUnsupportedThinking).

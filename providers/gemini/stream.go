@@ -67,7 +67,7 @@ func decodeStream(r io.Reader, modelHint string, yield func(llm.StreamEvent, err
 		return
 	}
 
-	err := sse.Read(r, 4*1024*1024, func(f sse.Frame) error {
+	err := sse.Read(r, func(f sse.Frame) error {
 		// Gemini does not emit named events; the data line is JSON.
 		if f.Data == "" {
 			return nil

@@ -6,6 +6,52 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-08-17
+
+### Fixed
+
+- **A large SSE frame no longer destroys the turn.** `internal/sse` read
+  frames with a `bufio.Scanner`, whose token limit each provider passed
+  separately: `gemini` set 4 MB, and the other three passed `0` and inherited
+  the 1 MB default — including `openai_responses`, the provider with the
+  largest frames by construction. Its terminal frame carries the whole
+  response object, and it requests `reasoning.encrypted_content`, whose size
+  `max_output_tokens` does not bound. Past the ceiling the stream returned
+  bare `bufio.ErrTooLong`, which satisfies neither `net.Error` nor `io.EOF`,
+  so no consumer retry caught it and the whole turn was lost.
+
+  Demonstrated deterministically — 900 KB parses, 1 MB yields **zero frames**
+  and `bufio.Scanner: token too long`:
+
+  ```
+  line≈900KB  frames=1  err=<nil>
+  line≈1024KB frames=0  err=bufio.Scanner: token too long
+  ```
+
+  The reader now accumulates a line across buffer fills with
+  `bufio.Reader.ReadSlice`, so a frame costs what it actually is (the read
+  buffer stays 64 KB) and there is no preallocated cliff. Fixes [#62].
+
+- **The per-call-site line limit is gone.** `sse.Read` no longer takes
+  `maxLine`; a single `sse.MaxFrameBytes` backstop applies everywhere. The
+  asymmetry was the bug — a parameter each provider set independently meant
+  the one with the biggest frames could quietly hold the smallest budget, and
+  no call site can get that wrong now.
+
+### Added
+
+- **`ErrFrameTooLarge`** (+ `IsFrameTooLarge` sugar) — returned when a
+  provider sends a single line beyond `sse.MaxFrameBytes` (32 MB), instead of
+  a bare `bufio` error a consumer cannot classify. Wraps `ErrProvider` and is
+  **not** retriable: the same request produces the same frame.
+
+  32 MB is a memory backstop, not a tuned budget. Sizes near what has been
+  observed (370 KB measured on a capped turn) are a cliff waiting for a bigger
+  response, and the failure is catastrophic while the cost of a high ceiling
+  is only memory that is never allocated unless a provider actually sends it.
+
+[#62]: https://github.com/amit-timalsina/pi-llm-go/issues/62
+
 ## [1.7.1] - 2026-08-17
 
 ### Fixed
@@ -1028,7 +1074,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.7.1...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.5.0...v1.6.0
