@@ -970,3 +970,32 @@ func thinkingConfigFromBody(t *testing.T, body json.RawMessage) map[string]any {
 	}
 	return decoded.GenerationConfig.ThinkingConfig
 }
+
+// Gemini's implicit cache fires unrequested (measured: a repeated 4k prefix
+// reported 3055 cached tokens), and promptTokenCount includes them.
+func TestUsageCachedContentIsReportedAndExcluded(t *testing.T) {
+	const payload = `data: {"candidates":[{"content":{"parts":[{"text":"ok"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":4006,"cachedContentTokenCount":3055,"candidatesTokenCount":3,"totalTokenCount":4035}}
+
+`
+	fs := &fakeServer{payload: payload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	msg, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    gemini.Gemini2_5Flash,
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if msg.Usage.CacheReadTokens != 3055 {
+		t.Errorf("CacheReadTokens=%d, want 3055 (was hardcoded 0)", msg.Usage.CacheReadTokens)
+	}
+	if msg.Usage.InputTokens != 951 {
+		t.Errorf("InputTokens=%d, want 951 (4006 prompt - 3055 cached)", msg.Usage.InputTokens)
+	}
+	if sum := msg.Usage.InputTokens + msg.Usage.CacheReadTokens; sum != 4006 {
+		t.Errorf("buckets sum to %d, want the provider's 4006", sum)
+	}
+}

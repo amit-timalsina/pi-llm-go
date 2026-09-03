@@ -6,6 +6,63 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-08-17
+
+### Fixed
+
+- **Cached tokens are billed once, not twice.** `ApplyPricing` priced
+  `InputTokens` at the full input rate **and** `CacheReadTokens` at the cache
+  rate, then summed — correct only if the provider reports them disjoint.
+  Anthropic does; OpenAI and Gemini count cached tokens *inside* their prompt
+  total, so the cached portion was charged twice. Measured live on
+  `gpt-5.5` with a 96%-cached prompt:
+
+  ```
+  Input=170  CacheRead=3840  cost=$0.003730   (pre-fix $0.022930 = 6.1x)
+  ```
+
+  The direction matters: it made prompt caching look pointless in exactly the
+  reports you would use to justify it. Introduced in v1.2.0, which wired
+  `prompt_tokens_details.cached_tokens` into `CacheReadTokens` without
+  checking that `prompt_tokens` already contained them. Fixes [#64].
+
+- **Gemini cache hits are no longer invisible.** `CacheReadTokens` was
+  hardcoded to `0` on the assumption that Gemini caching is opt-in. Implicit
+  caching fires unrequested — a repeated 4k-token prefix reported 3055 cached
+  tokens — so those tokens were billed at the full input rate:
+
+  ```
+  before $0.001209 (cache invisible)   after $0.000384   3.1x overstated
+  ```
+
+- **An unseeded cache rate no longer prices cached tokens at zero.** When
+  `Pricing.CacheRead` is 0 while `CacheReadTokens > 0`, they now price at the
+  input rate. Understating a bill is worse than admitting the discount is
+  unknown.
+
+### Changed
+
+- **`Usage.InputTokens` now excludes cached tokens on OpenAI and Gemini.**
+  The three input buckets — `InputTokens`, `CacheReadTokens`,
+  `CacheWriteTokens` — are disjoint by contract on every provider, so
+  `InputTokens` is what is billed at the full input rate and nothing more.
+  Recovering a provider's raw prompt total means adding the cache buckets
+  back.
+
+  This is deliberately the **opposite** call from [#44], where
+  `ReasoningTokens` stayed nested inside `OutputTokens`: there, every
+  provider nests it on the wire, so there was one convention to defer to.
+  Here the wire conventions disagree, so a single meaning has to be chosen or
+  the field is unusable for the cross-provider comparison this library exists
+  for.
+
+  Visible to callers: an OpenAI or Gemini `InputTokens` drops on a cache hit.
+  Anything pricing from `Usage` independently — an observability backend,
+  internal cost attribution — was wrong in the same direction and is now
+  right.
+
+[#64]: https://github.com/amit-timalsina/pi-llm-go/issues/64
+
 ## [1.8.0] - 2026-08-17
 
 ### Fixed
@@ -1074,7 +1131,8 @@ summaries).
   OpenAI-compatible hosts. Caught via Azure OpenAI smoke-testing against
   gpt-5.4-mini.
 
-[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/amit-timalsina/pi-llm-go/compare/v1.6.0...v1.7.0

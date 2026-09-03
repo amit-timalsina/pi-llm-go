@@ -7,6 +7,13 @@ Reordering happens when reality changes.
 
 ## Status
 
+- **v1.9.0** shipped 2026-08-17 — cache-aware cost: the three input buckets
+  are disjoint on every provider. Closes #64 — `ApplyPricing` summed
+  `InputTokens` and `CacheReadTokens` as siblings, but OpenAI and Gemini
+  count cached tokens inside their prompt total, so a 96%-cached call came
+  back 6.1x overstated. Gemini cache hits were invisible entirely (3.1x).
+  Opposite call from #44's nested `ReasoningTokens`, because there the wire
+  conventions agreed and here they don't.
 - **v1.8.0** shipped 2026-08-17 — SSE frames are no longer bounded by a
   per-provider `bufio.Scanner` token limit, plus `ErrFrameTooLarge`. Closes
   #62 — three providers inherited a 1 MB default and one set 4 MB, so the

@@ -112,12 +112,15 @@ func (d *streamDecoder) decode(r io.Reader, yield func(llm.StreamEvent, error) b
 		}
 
 		if c.Usage != nil {
+			cached := c.Usage.PromptTokensDetails.CachedTokens
 			d.usage = llm.Usage{
-				InputTokens:     c.Usage.PromptTokens,
+				// prompt_tokens is the TOTAL and cached_tokens a subset of it;
+				// llm.Usage keeps the buckets disjoint so each is billed once.
+				InputTokens:     uncachedInput(c.Usage.PromptTokens, cached),
 				OutputTokens:    c.Usage.CompletionTokens,
 				TotalTokens:     c.Usage.TotalTokens,
 				ReasoningTokens: c.Usage.CompletionTokensDetails.ReasoningTokens,
-				CacheReadTokens: c.Usage.PromptTokensDetails.CachedTokens,
+				CacheReadTokens: cached,
 			}
 		}
 

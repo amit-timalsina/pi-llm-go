@@ -357,11 +357,17 @@ func (d *streamDecoder) handleCompleted(data string, yield func(llm.StreamEvent,
 	}
 	usage := llm.Usage{}
 	if ev.Response.Usage != nil {
-		usage.InputTokens = ev.Response.Usage.InputTokens
+		// input_tokens is the TOTAL and cached_tokens a subset of it; keep the
+		// buckets disjoint so each token is billed once.
+		cached := ev.Response.Usage.InputTokensDetails.CachedTokens
+		usage.InputTokens = ev.Response.Usage.InputTokens - cached
+		if usage.InputTokens < 0 {
+			usage.InputTokens = 0
+		}
 		usage.OutputTokens = ev.Response.Usage.OutputTokens
 		usage.TotalTokens = ev.Response.Usage.TotalTokens
 		usage.ReasoningTokens = ev.Response.Usage.OutputTokensDetails.ReasoningTokens
-		usage.CacheReadTokens = ev.Response.Usage.InputTokensDetails.CachedTokens
+		usage.CacheReadTokens = cached
 		usage.CacheWriteTokens = ev.Response.Usage.InputTokensDetails.CacheWriteTokens
 		if usage.TotalTokens == 0 {
 			usage.TotalTokens = usage.InputTokens + usage.OutputTokens

@@ -40,6 +40,8 @@ type usageMetadata struct {
 	CandidatesTokenCount int `json:"candidatesTokenCount"`
 	TotalTokenCount      int `json:"totalTokenCount"`
 	ThoughtsTokenCount   int `json:"thoughtsTokenCount,omitempty"`
+	// CachedContentTokenCount is a SUBSET of PromptTokenCount.
+	CachedContentTokenCount int `json:"cachedContentTokenCount,omitempty"`
 }
 
 // decodeStream parses Gemini's SSE stream and translates each event
@@ -314,15 +316,19 @@ func (a *streamAccumulator) finalize() []llm.StreamEvent {
 	events := a.closeOpen()
 	usage := llm.Usage{}
 	if a.lastUsage != nil {
-		usage.InputTokens = a.lastUsage.PromptTokenCount
+		// promptTokenCount is the TOTAL and cachedContentTokenCount a subset of
+		// it; keep the buckets disjoint so each token is billed once.
+		usage.InputTokens = a.lastUsage.PromptTokenCount - a.lastUsage.CachedContentTokenCount
+		if usage.InputTokens < 0 {
+			usage.InputTokens = 0
+		}
 		usage.OutputTokens = a.lastUsage.CandidatesTokenCount + a.lastUsage.ThoughtsTokenCount
 		usage.ReasoningTokens = a.lastUsage.ThoughtsTokenCount
 		usage.TotalTokens = a.lastUsage.TotalTokenCount
-		// Gemini exposes prompt-cache hits via cachedContentTokenCount
-		// on the wire; not surfaced at v0.4.0 — Gemini's caching is
-		// opt-in via the CachedContent API rather than automatic.
-		usage.CacheReadTokens = 0
-		usage.CacheWriteTokens = 0
+		// Implicit caching fires without being asked for, so this is not an
+		// opt-in-only counter: a repeated 4k-token prefix reported 3055 cached
+		// tokens unrequested. Gemini reports no cache-write count.
+		usage.CacheReadTokens = a.lastUsage.CachedContentTokenCount
 	}
 	stop := a.stopReason
 	if !a.gotFinish {

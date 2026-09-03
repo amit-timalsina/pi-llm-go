@@ -334,6 +334,8 @@ fmt.Printf("in=%d out=%d (reasoning=%d) cache_write=%d (5m=%d, 1h=%d) cache_read
     msg.Usage.CacheReadTokens, msg.Usage.TotalTokens)
 ```
 
+`InputTokens`, `CacheReadTokens` and `CacheWriteTokens` are **disjoint** — each token lands in exactly one, billed once at its own rate, so `ComputeCost` just sums them. Providers disagree on the wire (Anthropic reports them separately; OpenAI and Gemini count cached tokens inside their prompt total) and the providers normalise, so `InputTokens` is what is billed at the full input rate and nothing more. To recover a provider's raw prompt total, add the cache buckets back.
+
 `ReasoningTokens` is the slice of `OutputTokens` spent on reasoning that never comes back as visible output — on a reasoning model it is routinely the majority of output spend, and it bills at the output rate. It is a **subset** of `OutputTokens`, matching how providers nest it on the wire, so adding the two double-counts:
 
 ```go
