@@ -771,3 +771,33 @@ data: {"type":"response.completed","response":{"id":"resp_big","model":"gpt-5.6-
 		t.Errorf("Content[0]=%+v, want TextBlock{done}", msg.Content[0])
 	}
 }
+
+// input_tokens is inclusive of cached_tokens here too (measured: 4010 fixed
+// while cached went 0 -> 3840).
+func TestStreamUsageInputExcludesCachedTokens(t *testing.T) {
+	const payload = `event: response.created
+data: {"type":"response.created","response":{"id":"r","model":"gpt-5.5","status":"in_progress"}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"r","status":"completed","usage":{"input_tokens":4010,"input_tokens_details":{"cached_tokens":3840,"cache_write_tokens":0},"output_tokens":15,"total_tokens":4025}}}
+
+`
+	fs := &fakeServer{payload: payload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	msg, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    "gpt-5.5",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if msg.Usage.InputTokens != 170 {
+		t.Errorf("InputTokens=%d, want 170", msg.Usage.InputTokens)
+	}
+	if msg.Usage.CacheReadTokens != 3840 {
+		t.Errorf("CacheReadTokens=%d, want 3840", msg.Usage.CacheReadTokens)
+	}
+}

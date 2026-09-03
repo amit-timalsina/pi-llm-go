@@ -20,7 +20,7 @@ go get github.com/amit-timalsina/pi-llm-go
   `TextBlock`/`ThinkingBlock`/`ToolCallBlock` through `Signature`.
 - `llm.Block` — sealed sum: `TextBlock`, `ToolCallBlock`, `ToolResultBlock`, `ThinkingBlock`, `ImageBlock`, `VideoBlock`.
 - `llm.StreamEvent` — sealed sum: `EventMessageStart`, `EventTextStart`, `EventTextDelta`, `EventTextEnd`, `EventThinkingStart`, `EventThinkingDelta`, `EventThinkingEnd`, `EventToolCallStart`, `EventToolCallDelta`, `EventToolCallEnd`, `EventMessageEnd`.
-- `llm.Usage` — token accounting incl. per-TTL cache breakdown (Anthropic).
+- `llm.Usage` — token accounting incl. per-TTL cache breakdown (Anthropic). `InputTokens` / `CacheReadTokens` / `CacheWriteTokens` are DISJOINT (each token billed once); `ReasoningTokens` is a SUBSET of `OutputTokens`.
 - `llm.APIError` — wraps non-2xx responses; `Inner` carries the sentinel; `RetryAfter` is the parsed server hint.
 
 ## Helpers

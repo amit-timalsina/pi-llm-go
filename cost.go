@@ -109,12 +109,21 @@ func ComputeCost(usage Usage, model string) (Cost, error) {
 // poll) outside the built-in table.
 //
 // Usage.ReasoningTokens is deliberately not priced — it is a subset of
-// OutputTokens, so a term for it would double-count.
+// OutputTokens, so a term for it would double-count. InputTokens,
+// CacheReadTokens and CacheWriteTokens are disjoint by contract (see
+// llm.Usage), so each is priced once at its own rate.
 func ApplyPricing(usage Usage, p Pricing) Cost {
+	// An unseeded cache rate must not price cached tokens at zero — that
+	// understates, and understating a bill is worse than admitting we do not
+	// know the discount. Fall back to the full input rate.
+	cacheRate := p.CacheRead
+	if cacheRate == 0 && usage.CacheReadTokens > 0 {
+		cacheRate = p.Input
+	}
 	c := Cost{
 		Input:     perMillion(usage.InputTokens, p.Input),
 		Output:    perMillion(usage.OutputTokens, p.Output),
-		CacheRead: perMillion(usage.CacheReadTokens, p.CacheRead),
+		CacheRead: perMillion(usage.CacheReadTokens, cacheRate),
 	}
 
 	// Prefer the TTL-tagged breakdown when present. Falls back to a

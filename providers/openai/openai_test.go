@@ -418,3 +418,39 @@ func TestRequest_UnsupportedThinkingRejected(t *testing.T) {
 		})
 	}
 }
+
+// prompt_tokens is inclusive of cached_tokens on the wire (measured:
+// Input stayed 4010 across a miss and a hit while cached went 0 -> 3840).
+// llm.Usage keeps the buckets disjoint so ComputeCost bills each once.
+func TestUsageInputExcludesCachedTokens(t *testing.T) {
+	const payload = `data: {"id":"c","model":"gpt-5.5","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}
+
+data: {"id":"c","model":"gpt-5.5","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"c","model":"gpt-5.5","choices":[],"usage":{"prompt_tokens":4010,"prompt_tokens_details":{"cached_tokens":3840},"completion_tokens":15,"total_tokens":4025}}
+
+data: [DONE]
+
+`
+	fs := &fakeServer{payload: payload}
+	srv := httptest.NewServer(fs.handler())
+	defer srv.Close()
+	p := newProvider(t, srv)
+
+	msg, err := llm.Complete(context.Background(), p, llm.Request{
+		Model:    "gpt-5.5",
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if msg.Usage.InputTokens != 170 {
+		t.Errorf("InputTokens=%d, want 170 (4010 prompt - 3840 cached)", msg.Usage.InputTokens)
+	}
+	if msg.Usage.CacheReadTokens != 3840 {
+		t.Errorf("CacheReadTokens=%d, want 3840", msg.Usage.CacheReadTokens)
+	}
+	if sum := msg.Usage.InputTokens + msg.Usage.CacheReadTokens; sum != 4010 {
+		t.Errorf("buckets sum to %d, want the provider's 4010", sum)
+	}
+}

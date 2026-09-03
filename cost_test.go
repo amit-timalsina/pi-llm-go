@@ -246,3 +246,38 @@ func TestRegisterPricing_OverridesShadowSeedEntries(t *testing.T) {
 		t.Errorf("override did not win: got %+v, want %+v", got, override)
 	}
 }
+
+// Cached tokens must be billed once, at the cache rate. Before the buckets
+// were disjoint, a 96%-cached call priced all 4010 prompt tokens at the full
+// input rate AND added the cached 3840 again — ~8x overstated.
+func TestApplyPricingBillsCachedTokensOnce(t *testing.T) {
+	p := llm.Pricing{Input: 5.00, Output: 30.00, CacheRead: 0.50}
+	// Measured on gpt-5.5: prompt 4010 of which 3840 cached, normalised.
+	u := llm.Usage{InputTokens: 170, CacheReadTokens: 3840, OutputTokens: 0}
+
+	got := llm.ApplyPricing(u, p).Total()
+	want := 170*5.00/1e6 + 3840*0.50/1e6
+	if math.Abs(got-want) > 1e-12 {
+		t.Fatalf("Total()=%.9f, want %.9f", got, want)
+	}
+	// The pre-fix number, for contrast: it must NOT come back.
+	overstated := 4010*5.00/1e6 + 3840*0.50/1e6
+	if math.Abs(got-overstated) < 1e-12 {
+		t.Fatal("still pricing the cached portion twice")
+	}
+	if ratio := overstated / got; ratio < 7 {
+		t.Errorf("sanity: expected the old bug to be ~8x, got %.1fx", ratio)
+	}
+}
+
+// A model whose seed lacks a cache rate must not price cached tokens free.
+func TestApplyPricingUnseededCacheRateFallsBackToInput(t *testing.T) {
+	p := llm.Pricing{Input: 2.00, Output: 8.00} // no CacheRead
+	u := llm.Usage{InputTokens: 100, CacheReadTokens: 900}
+
+	got := llm.ApplyPricing(u, p).Total()
+	want := 1000 * 2.00 / 1e6 // all 1000 at the input rate
+	if math.Abs(got-want) > 1e-12 {
+		t.Fatalf("Total()=%.9f, want %.9f (unknown discount must not be free)", got, want)
+	}
+}

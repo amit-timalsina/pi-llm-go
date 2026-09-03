@@ -379,3 +379,15 @@ func stopReasonFromAPI(s string) (llm.StopReason, error) {
 		return llm.StopReasonEnd, nil
 	}
 }
+
+// uncachedInput returns the prompt tokens billed at the full input rate.
+// OpenAI reports prompt_tokens inclusive of cached_tokens; llm.Usage keeps
+// the buckets disjoint, so the cached portion belongs only to
+// CacheReadTokens. Clamped at zero in case a provider ever reports more
+// cached tokens than prompt tokens.
+func uncachedInput(prompt, cached int) int {
+	if cached >= prompt {
+		return 0
+	}
+	return prompt - cached
+}

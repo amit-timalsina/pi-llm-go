@@ -4,6 +4,15 @@ package llm
 // completion request. Cache fields are zero when the provider doesn't
 // bill or report cache reads/writes separately.
 //
+// The three input buckets — InputTokens, CacheReadTokens and
+// CacheWriteTokens — are DISJOINT: each token appears in exactly one, so
+// each is billed once at its own rate and ComputeCost can simply sum them.
+// Providers disagree on the wire — Anthropic reports them separately, while
+// OpenAI and Gemini count cached tokens inside their prompt total — and the
+// providers normalise to the disjoint form. So InputTokens is what is
+// billed at the full input rate and nothing more; recovering a provider's
+// raw prompt total means adding the cache buckets back.
+//
 // Cache-write TTL breakdown:
 //
 //   - CacheWriteTokens is the TOTAL of cache_creation_input_tokens (all
@@ -41,9 +50,10 @@ type Usage struct {
 	// with no breakdown reported) and on non-reasoning models.
 	ReasoningTokens int
 
-	// CacheReadTokens is the total tokens served from a cache hit on
-	// this request. Anthropic and both OpenAI surfaces populate it;
-	// Gemini does not yet surface it.
+	// CacheReadTokens is the tokens served from a cache hit, billed at the
+	// cache-read rate. Populated by every provider that reports one:
+	// Anthropic, both OpenAI surfaces, and Gemini (whose implicit cache
+	// fires without being asked for).
 	CacheReadTokens int
 
 	// CacheWriteTokens is the total tokens written to a cache on
